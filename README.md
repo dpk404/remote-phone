@@ -65,7 +65,7 @@ Unlike scrcpy (which requires ADB/USB debugging), RemotePhone works entirely ove
 sudo apt install ffmpeg libportaudio2
 
 # Install RemotePhone
-pip install remotephone
+pip install remote-phone
 
 # Run it
 remotephone
@@ -175,7 +175,7 @@ remote_phone/
 │   │   └── MirrorWebSocketServer.kt      # WebSocket server + backpressure
 │   └── app/src/main/res/                 # Layouts, drawables, configs
 │
-├── remotephone/                # Python desktop client (pip install remotephone)
+├── remotephone/                # Python desktop client (pip install remote-phone)
 │   ├── main.py                 # Entry point
 │   ├── ui/main_window.py       # PyQt6 window + video display
 │   ├── network/ws_client.py    # WebSocket client + auto-reconnect

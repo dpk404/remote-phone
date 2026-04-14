@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "remotephone"
+name = "remote-phone"
 version = "1.0.0"
 description = "Mirror and control your Android phone from your Linux desktop over WiFi"
 readme = "README.md"
