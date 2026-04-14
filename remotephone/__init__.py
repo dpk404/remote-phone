@@ -1,3 +1,3 @@
 """RemotePhone — Mirror and control your Android phone from Linux."""
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
