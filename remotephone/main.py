@@ -7,9 +7,14 @@ Mirror and control your Android phone from your Linux desktop.
 import sys
 import logging
 
-# Enable logging
+# Default to WARNING — only show errors and important messages
+# Use --verbose or -v flag for debug output
+_verbose = '--verbose' in sys.argv or '-v' in sys.argv
+if _verbose:
+    sys.argv = [a for a in sys.argv if a not in ('--verbose', '-v')]
+
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.DEBUG if _verbose else logging.WARNING,
     format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
     datefmt='%H:%M:%S'
 )

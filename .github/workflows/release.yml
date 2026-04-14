@@ -33,13 +33,9 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          cat > android/keystore.properties << EOF
-          storeFile=app/release-keystore.jks
-          storePassword=$KEYSTORE_PASSWORD
-          keyAlias=$KEY_ALIAS
-          keyPassword=$KEY_PASSWORD
-          EOF
+        run: |-
+          printf 'storeFile=app/release-keystore.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > android/keystore.properties
 
       - name: Build release APK
         working-directory: android
@@ -67,8 +63,8 @@ jobs:
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           tar -czf RemotePhone-linux-${VERSION}.tar.gz \
-            --transform "s|^linux_client|RemotePhone-linux-${VERSION}|" \
-            linux_client/
+            --transform "s|^remotephone|RemotePhone-linux-${VERSION}|" \
+            remotephone/
 
       - name: Upload client artifact
         uses: actions/upload-artifact@v4
