@@ -1,0 +1,51 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Phone body -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M38,22h32c2.2,0 4,1.8 4,4v56c0,2.2 -1.8,4 -4,4H38c-2.2,0 -4,-1.8 -4,-4V26c0,-2.2 1.8,-4 4,-4z" />
+
+    <!-- Screen -->
+    <path
+        android:fillColor="#7C3AED"
+        android:pathData="M37,29h34v46H37z" />
+
+    <!-- Signal waves from screen (cast/mirror symbol) -->
+    <!-- Inner arc -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:strokeWidth="0"
+        android:pathData="M44,60c0,-3.3 2.7,-6 6,-6v-3c-4.97,0 -9,4.03 -9,9h3z" />
+    <!-- Middle arc -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:strokeWidth="0"
+        android:pathData="M44,53c0,-3.3 2.7,-6 6,-6v-3c-4.97,0 -9,4.03 -9,9h3z" />
+    <!-- Outer arc -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:strokeWidth="0"
+        android:pathData="M44,46c0,-3.3 2.7,-6 6,-6v-3c-4.97,0 -9,4.03 -9,9h3z" />
+    <!-- Dot -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44,60a2,2 0,1 0,4 0a2,2 0,1 0,-4 0" />
+
+    <!-- Arrow pointing outward (streaming/remote) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M56,44l8,-8m0,0l-4,0m4,0l0,4"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- Home button indicator -->
+    <path
+        android:fillColor="#9CA3AF"
+        android:pathData="M50,79h8c1.1,0 2,0.9 2,2v0c0,1.1 -0.9,2 -2,2h-8c-1.1,0 -2,-0.9 -2,-2v0c0,-1.1 0.9,-2 2,-2z" />
+</vector>

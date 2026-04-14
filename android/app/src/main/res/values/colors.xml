@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_dark">#FF0D0D0F</color>
+    <color name="card_bg">#FF1A1A2E</color>
+    <color name="card_border">#FF2D2D44</color>
+    <color name="primary">#FF7C3AED</color>
+    <color name="primary_dark">#FF6D28D9</color>
+    <color name="primary_pressed">#FF5B21B6</color>
+    <color name="text_primary">#FFFFFFFF</color>
+    <color name="text_secondary">#FFD1D5DB</color>
+    <color name="text_muted">#FF9CA3AF</color>
+    <color name="text_hint">#FF6B7280</color>
+    <color name="status_green">#FF10B981</color>
+    <color name="status_red">#FFEF4444</color>
+    <color name="status_amber">#FFF59E0B</color>
+    <color name="accent_blue">#FF818CF8</color>
+</resources>

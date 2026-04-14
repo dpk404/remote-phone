@@ -1,0 +1,248 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_dark"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:padding="24dp">
+
+        <!-- App Title -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="RemotePhone"
+            android:textSize="32sp"
+            android:textColor="@color/text_primary"
+            android:textStyle="bold"
+            android:layout_marginTop="48dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Mirror &amp; Control"
+            android:textSize="14sp"
+            android:textColor="@color/text_hint"
+            android:layout_marginTop="4dp" />
+
+        <!-- Connection Info Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_background"
+            android:padding="20dp"
+            android:layout_marginTop="40dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="CONNECTION INFO"
+                android:textSize="11sp"
+                android:textColor="@color/text_hint"
+                android:letterSpacing="0.15" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="16dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="IP Address"
+                        android:textSize="12sp"
+                        android:textColor="@color/text_muted" />
+
+                    <TextView
+                        android:id="@+id/ipText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="..."
+                        android:textSize="20sp"
+                        android:textColor="@color/text_primary"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace"
+                        android:layout_marginTop="4dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="end">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Port"
+                        android:textSize="12sp"
+                        android:textColor="@color/text_muted" />
+
+                    <TextView
+                        android:id="@+id/portText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="8765"
+                        android:textSize="20sp"
+                        android:textColor="@color/text_primary"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace"
+                        android:layout_marginTop="4dp" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Status Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/card_background"
+            android:padding="16dp"
+            android:layout_marginTop="16dp">
+
+            <TextView
+                android:id="@+id/statusDot"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="○"
+                android:textSize="18sp"
+                android:textColor="@color/text_muted" />
+
+            <TextView
+                android:id="@+id/statusText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Ready to stream"
+                android:textSize="14sp"
+                android:textColor="@color/text_secondary"
+                android:layout_marginStart="12dp" />
+
+            <TextView
+                android:id="@+id/clientCount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textSize="12sp"
+                android:textColor="@color/text_hint" />
+        </LinearLayout>
+
+        <!-- Audio Toggle Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/card_background"
+            android:padding="16dp"
+            android:layout_marginTop="16dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Audio Mirroring"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_secondary" />
+
+                <TextView
+                    android:id="@+id/audioSubtext"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Streams phone audio to PC"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_hint"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+
+            <Switch
+                android:id="@+id/audioToggle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <!-- Start/Stop Button -->
+        <Button
+            android:id="@+id/startButton"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="32dp"
+            android:text="Start Mirroring"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_primary"
+            android:background="@drawable/button_primary" />
+
+        <!-- Accessibility Service Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_background"
+            android:padding="16dp"
+            android:layout_marginTop="24dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="REMOTE CONTROL SETUP"
+                android:textSize="11sp"
+                android:textColor="@color/text_hint"
+                android:letterSpacing="0.15" />
+
+            <TextView
+                android:id="@+id/accessibilityStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Accessibility Service: Not enabled"
+                android:textSize="13sp"
+                android:textColor="@color/status_amber"
+                android:layout_marginTop="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Enable RemotePhone in Settings → Accessibility to allow remote touch control from your computer."
+                android:textSize="12sp"
+                android:textColor="@color/text_muted"
+                android:layout_marginTop="4dp" />
+
+            <Button
+                android:id="@+id/accessibilityButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:text="Open Accessibility Settings"
+                android:textSize="12sp"
+                android:textColor="@color/accent_blue"
+                android:background="@android:color/transparent"
+                android:layout_marginTop="8dp"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="1dp"
+            android:layout_height="48dp" />
+
+    </LinearLayout>
+</ScrollView>

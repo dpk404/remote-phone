@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">RemotePhone</string>
+    <string name="accessibility_description">RemotePhone uses this service to receive touch and gesture commands from your computer, enabling remote control of your phone without USB debugging.</string>
+</resources>

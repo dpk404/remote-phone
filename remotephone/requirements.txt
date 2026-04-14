@@ -1,0 +1,5 @@
+PyQt6>=6.5
+websocket-client>=1.6
+av>=12.0
+numpy>=1.24
+sounddevice>=0.4

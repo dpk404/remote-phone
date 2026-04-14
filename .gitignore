@@ -1,0 +1,30 @@
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/keystore.properties
+android/app/release-keystore.jks
+*.apk
+*.aab
+
+# Python
+remotephone/venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
