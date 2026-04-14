@@ -145,7 +145,11 @@ class MainActivity : AppCompatActivity() {
             accessibilityStatus.text = "Accessibility Service: ✓ Enabled"
             accessibilityStatus.setTextColor(Color.parseColor("#10B981"))
         } else {
-            accessibilityStatus.text = "Accessibility Service: Not enabled"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                accessibilityStatus.text = "Accessibility Service: Not enabled\n⚠ On Android 13+: go to Settings → Apps → RemotePhone → ⋮ menu → \"Allow restricted settings\" first"
+            } else {
+                accessibilityStatus.text = "Accessibility Service: Not enabled"
+            }
             accessibilityStatus.setTextColor(Color.parseColor("#F59E0B"))
         }
     }

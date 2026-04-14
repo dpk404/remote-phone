@@ -44,8 +44,9 @@ Unlike scrcpy (which requires ADB/USB debugging), RemotePhone works entirely ove
 
 **Option A — Install pre-built APK:**
 
-1. Transfer `RemotePhone-debug.apk` to your phone and install it
-2. Open the app and tap **"Open Accessibility Settings"** -> find **RemotePhone** -> **Enable** it
+1. Download the latest APK from [Releases](https://github.com/dpk404/remote-phone/releases) and install it
+2. **Android 13+ only:** Go to **Settings -> Apps -> RemotePhone -> ⋮ menu -> "Allow restricted settings"** (required for sideloaded apps to use accessibility)
+3. Open the app and tap **"Open Accessibility Settings"** -> find **RemotePhone** -> **Enable** it
 
 **Option B — Build from source:**
 
