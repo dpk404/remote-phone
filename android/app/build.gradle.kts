@@ -57,6 +57,12 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    dependenciesInfo {
+        // Disable dependency metadata in APK signing block — F-Droid scanner rejects it
+        includeInApk = false
+        includeInBundle = false
+    }
 }
 
 dependencies {
