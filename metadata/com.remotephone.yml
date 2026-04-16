@@ -13,9 +13,9 @@ Repo: https://github.com/dpk404/remote-phone.git
 Binaries: https://github.com/dpk404/remote-phone/releases/download/v%v/RemotePhone-%v.apk
 
 Builds:
-  - versionName: 1.0.1
-    versionCode: 2
-    commit: 5978b9df7bc57b204fdb289752d3122e13ceafa7
+  - versionName: 1.0.2
+    versionCode: 3
+    commit: 974498538060d337c97f1b0cff00620d8a3278ca
     subdir: android/app
     gradle:
       - yes
@@ -24,5 +24,5 @@ AllowedAPKSigningKeys: dc75653618faadbd4a9ba97e2b287a54fb541a6f9f388ec4eb24e6acf
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 1.0.1
-CurrentVersionCode: 2
+CurrentVersion: 1.0.2
+CurrentVersionCode: 3
