@@ -19,6 +19,7 @@ Builds:
     subdir: android/app
     gradle:
       - yes
+
   - versionName: 1.1.0
     versionCode: 4
     commit: 832c077ab8257dfbedc9d6de3a856121d00e35f4
