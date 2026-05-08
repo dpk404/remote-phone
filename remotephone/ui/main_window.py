@@ -414,13 +414,15 @@ class MainWindow(QMainWindow):
         self.status_label.setText("● Connected")
         self.decoder.start()
 
-    def _on_disconnected(self):
+    def _on_disconnected(self, clean: bool = False):
         was_connected = self.connected
         self.connected = False
         self.fps_label.setText("")
         self.decoder.stop()
         self.audio_player.stop()
-        if was_connected:
+        self.input_handler.reset()
+        self.video_widget._pressing = False
+        if was_connected and not clean:
             self.status_label.setText("Connection lost — reconnecting...")
             self.connect_btn.setText("Cancel")
         else:

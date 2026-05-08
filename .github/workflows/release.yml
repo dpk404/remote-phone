@@ -63,8 +63,8 @@ jobs:
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           tar -czf RemotePhone-linux-${VERSION}.tar.gz \
-            --transform "s|^remotephone|RemotePhone-linux-${VERSION}|" \
-            remotephone/
+            --transform "s|^|RemotePhone-linux-${VERSION}/|" \
+            run.sh remotephone/
 
       - name: Upload client artifact
         uses: actions/upload-artifact@v4

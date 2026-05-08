@@ -5,7 +5,6 @@
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Check system dependencies
 if ! command -v python3 &> /dev/null; then
@@ -28,11 +27,10 @@ if [ ! -d "venv" ]; then
     echo "Installing dependencies..."
     source ./venv/bin/activate
     pip install --upgrade pip -q
-    pip install -r requirements.txt -q
+    pip install -r remotephone/requirements.txt -q
 else
     source ./venv/bin/activate
 fi
 
 echo "Starting RemotePhone client..."
-cd "$PROJECT_ROOT"
 python -m remotephone.main "$@"

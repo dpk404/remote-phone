@@ -41,6 +41,19 @@ class InputHandler:
         self._last_scroll_time = 0.0  # tracks last scroll to suppress ghost taps
         self._suppressed = False      # whether current press was suppressed
 
+    def reset(self):
+        """Clear all in-progress gesture and scroll state (call on disconnect)."""
+        self._press_x = 0.0
+        self._press_y = 0.0
+        self._press_time = 0.0
+        self._last_x = 0.0
+        self._last_y = 0.0
+        self._moved = False
+        self._hscroll_accum = 0.0
+        self._hscroll_time = 0.0
+        self._last_scroll_time = 0.0
+        self._suppressed = False
+
     def on_press(self, x: float, y: float) -> dict | None:
         """Record the start of a mouse press."""
         self._press_x = x

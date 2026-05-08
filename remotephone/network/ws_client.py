@@ -28,8 +28,8 @@ class WebSocketClient(QObject):
 
     # Signals (emitted from background thread, received on main thread)
     connected = pyqtSignal()
-    disconnected = pyqtSignal()
-    reconnecting = pyqtSignal(int)  # attempt number
+    disconnected = pyqtSignal(bool)  # True = server stopped cleanly (no auto-reconnect)
+    reconnecting = pyqtSignal(int)   # attempt number
     frame_received = pyqtSignal(int, int, bytes)  # frame_type, timestamp, payload (audio only)
     info_received = pyqtSignal(dict)
     error_occurred = pyqtSignal(str)
@@ -47,6 +47,7 @@ class WebSocketClient(QObject):
         self._video_decoder = None
         self._should_reconnect = False  # True while user wants to stay connected
         self._stop_event = threading.Event()
+        self._local_close = False  # True when WE initiated the disconnect
 
     def set_video_decoder(self, decoder):
         """Set direct decoder reference for low-latency video frame routing."""
@@ -55,6 +56,10 @@ class WebSocketClient(QObject):
     def connect_to(self, url: str):
         """Start a background thread that connects to the WebSocket server."""
         self.disconnect()
+        # Wait for the old thread to fully exit before starting a new one,
+        # so both threads never race over self._ws at the same time.
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
         self._url = url
         self._frame_count = 0
         self._should_reconnect = True
@@ -181,7 +186,15 @@ class WebSocketClient(QObject):
 
     def _on_close(self, ws, close_status_code, close_msg):
         log.info(f"Disconnected (code={close_status_code}, msg={close_msg})")
-        self.disconnected.emit()
+        # Clean if server stopped intentionally (code 1000) or we initiated the close
+        clean = close_status_code == 1000 or self._local_close
+        self._local_close = False
+        if clean:
+            self._should_reconnect = False
+            self._stop_event.set()
+        with self._lock:
+            self._ws = None
+        self.disconnected.emit(clean)
 
     def send_command(self, command: dict):
         """Send a JSON control command to the phone."""
@@ -196,6 +209,7 @@ class WebSocketClient(QObject):
         """Cleanly close the WebSocket connection and stop reconnect loop."""
         self._should_reconnect = False
         self._stop_event.set()
+        self._local_close = True
         with self._lock:
             if self._ws:
                 try:

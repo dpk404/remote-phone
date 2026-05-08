@@ -78,8 +78,7 @@ remotephone
 # Install system dependencies (Ubuntu/Debian)
 sudo apt install python3 python3-venv python3-pip libportaudio2 ffmpeg
 
-# Run the client
-cd remotephone
+# Extract the tarball (if downloaded from Releases), then run:
 chmod +x run.sh
 ./run.sh
 ```
@@ -184,9 +183,9 @@ remote_phone/
 │   ├── decoder/video_decoder.py # H.264 decoding (PyAV/FFmpeg)
 │   ├── decoder/audio_player.py  # PCM audio playback
 │   ├── input/input_handler.py   # Mouse/keyboard + gesture detection
-│   ├── requirements.txt
-│   └── run.sh                  # Auto-setup launcher (for running from source)
+│   └── requirements.txt
 │
+├── run.sh                      # Auto-setup launcher (for running from source)
 ├── pyproject.toml              # Python package config
 ├── .github/workflows/          # CI/CD (APK build + PyPI publish)
 └── README.md

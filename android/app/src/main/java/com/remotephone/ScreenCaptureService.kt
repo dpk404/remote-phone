@@ -147,6 +147,10 @@ class ScreenCaptureService : Service() {
         }
         Log.i(TAG, "Real screen dimensions: ${screenWidth}x${screenHeight} @ ${density}dpi")
 
+        // Some hardware encoders require dimensions aligned to a multiple of 2
+        screenWidth = screenWidth and (-2)
+        screenHeight = screenHeight and (-2)
+
         // Setup H.264 video encoder — tuned for low-latency streaming
         val videoFormat = MediaFormat.createVideoFormat(
             MediaFormat.MIMETYPE_VIDEO_AVC, screenWidth, screenHeight
@@ -167,9 +171,26 @@ class ScreenCaptureService : Service() {
             setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel41)
         }
 
-        videoEncoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC).apply {
-            configure(videoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        // Some hardware encoders (common on LineageOS/custom ROMs) reject the profile/level or
+        // optional keys with IllegalArgumentException. Fall back to a minimal compatible config.
+        val encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        try {
+            encoder.configure(videoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "Encoder config failed with optimized format, retrying with baseline", e)
+            encoder.reset()
+            val fallbackFormat = MediaFormat.createVideoFormat(
+                MediaFormat.MIMETYPE_VIDEO_AVC, screenWidth, screenHeight
+            ).apply {
+                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                setInteger(MediaFormat.KEY_BIT_RATE, calculateBitrate(screenWidth, screenHeight))
+                setInteger(MediaFormat.KEY_FRAME_RATE, 30)
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+                setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+            }
+            encoder.configure(fallbackFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         }
+        videoEncoder = encoder
 
         val inputSurface = videoEncoder!!.createInputSurface()
         videoEncoder!!.start()

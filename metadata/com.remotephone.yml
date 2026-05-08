@@ -19,10 +19,16 @@ Builds:
     subdir: android/app
     gradle:
       - yes
+  - versionName: 1.1.0
+    versionCode: 4
+    commit: v1.1.0
+    subdir: android/app
+    gradle:
+      - yes
 
 AllowedAPKSigningKeys: dc75653618faadbd4a9ba97e2b287a54fb541a6f9f388ec4eb24e6acfeec0dcc
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 1.0.2
-CurrentVersionCode: 3
+CurrentVersion: 1.1.0
+CurrentVersionCode: 4
