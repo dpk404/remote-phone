@@ -27,7 +27,7 @@ if [ ! -d "venv" ]; then
     echo "Installing dependencies..."
     source ./venv/bin/activate
     pip install --upgrade pip -q
-    pip install -r remotephone/requirements.txt -q
+    pip install -e . -q
 else
     source ./venv/bin/activate
 fi

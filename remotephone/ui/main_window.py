@@ -3,42 +3,33 @@ RemotePhone — Main Window
 Displays the mirrored phone screen and captures input for remote control.
 """
 
-import json
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QStatusBar,
     QSizePolicy, QCheckBox
 )
-from PyQt6.QtCore import Qt, QRectF, pyqtSignal, pyqtSlot, QTimer
+from PyQt6.QtCore import Qt, QRectF, QTimer
 from PyQt6.QtGui import QImage, QPainter, QColor, QFont, QKeyEvent
 
-from remotephone.network.ws_client import WebSocketClient
+from remotephone.network.ws_client import WebSocketClient, FRAME_AUDIO_DATA
 from remotephone.network.scanner import NetworkScanner
 from remotephone.decoder.video_decoder import VideoDecoder
 from remotephone.decoder.audio_player import AudioPlayer
 from remotephone.input.input_handler import InputHandler
 
-# Frame type constants (must match Android side)
-FRAME_VIDEO_CONFIG = 0x00
-FRAME_VIDEO_KEY = 0x01
-FRAME_VIDEO_DELTA = 0x02
-FRAME_AUDIO_CONFIG = 0x10
-FRAME_AUDIO_DATA = 0x11
+_BACK = {"type": "key", "action": "back"}
 
 
 class VideoWidget(QWidget):
     """
-    Custom widget that renders the phone screen and translates mouse events
-    into phone-coordinate touch commands.
+    Renders the phone screen and turns mouse events into phone-coordinate
+    commands via the InputHandler, sending them through the given callback.
     """
 
-    mouse_press = pyqtSignal(float, float)
-    mouse_release = pyqtSignal(float, float)
-    mouse_move = pyqtSignal(float, float)
-    mouse_scroll = pyqtSignal(float, float, float, float)
-
-    def __init__(self, parent=None):
+    def __init__(self, input_handler: InputHandler, send_command, parent=None):
         super().__init__(parent)
+        self.input = input_handler
+        self.send_command = send_command
         self.image = None
         self.phone_width = 1080
         self.phone_height = 2400
@@ -66,22 +57,8 @@ class VideoWidget(QWidget):
         painter.fillRect(self.rect(), QColor(0, 0, 0))
 
         if self.image:
-            # Maintain aspect ratio
-            img_ratio = self.image.width() / self.image.height()
-            widget_ratio = self.width() / self.height()
-
-            if widget_ratio > img_ratio:
-                h = self.height()
-                w = int(h * img_ratio)
-            else:
-                w = self.width()
-                h = int(w / img_ratio)
-
-            x = (self.width() - w) // 2
-            y = (self.height() - h) // 2
-
             # Draw QImage directly — avoids expensive QPixmap.fromImage() conversion per frame
-            target = QRectF(x, y, w, h)
+            target = QRectF(*self._get_display_rect())
             source = QRectF(0, 0, self.image.width(), self.image.height())
             painter.drawImage(target, self.image, source)
         else:
@@ -96,7 +73,7 @@ class VideoWidget(QWidget):
         painter.end()
 
     def _get_display_rect(self):
-        """Calculate the image display rectangle within the widget."""
+        """Calculate the aspect-fit image rectangle (x, y, w, h) within the widget."""
         if not self.image:
             return 0, 0, self.width(), self.height()
 
@@ -136,38 +113,40 @@ class VideoWidget(QWidget):
             px, py = self._map_to_phone(event.position())
             if px is not None:
                 self._pressing = True
-                self.mouse_press.emit(px, py)
+                self.input.on_press(px, py)
         elif event.button() == Qt.MouseButton.MiddleButton:
             # Middle-click (scroll wheel click) = Back gesture
-            self.window()._send_key_action("back")
+            self.send_command(_BACK)
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self._pressing:
-            px, py = self._map_to_phone(event.position())
-            if px is not None:
-                self.mouse_release.emit(px, py)
-            else:
-                # Released outside — send last known position
-                self.mouse_release.emit(-1, -1)
             self._pressing = False
+            px, py = self._map_to_phone(event.position())
+            if px is None:
+                px, py = -1, -1  # released outside — handler uses last known position
+            cmd = self.input.on_release(px, py)
+            if cmd:
+                self.send_command(cmd)
         elif event.button() == Qt.MouseButton.RightButton:
             # Right-click = Back button
-            self.window()._send_key_action("back")
+            self.send_command(_BACK)
         super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
         if self._pressing:
             px, py = self._map_to_phone(event.position())
             if px is not None:
-                self.mouse_move.emit(px, py)
+                self.input.on_move(px, py)
         super().mouseMoveEvent(event)
 
     def wheelEvent(self, event):
         px, py = self._map_to_phone(event.position())
         if px is not None:
             delta = event.angleDelta()
-            self.mouse_scroll.emit(px, py, float(delta.x()), float(delta.y()))
+            cmd = self.input.on_scroll(px, py, float(delta.x()), float(delta.y()))
+            if cmd:
+                self.send_command(cmd)
         super().wheelEvent(event)
 
 
@@ -188,14 +167,15 @@ class MainWindow(QMainWindow):
 
         # State
         self.connected = False
-        self.phone_info = None
-        self.frame_count = 0
-        self.fps = 0
+        self.frame_count = 0  # decoded frames since the last FPS tick
 
         self._setup_ui()
         self._setup_connections()
-        self._setup_fps_timer()
         self._apply_stylesheet()
+
+        self.fps_timer = QTimer(self)
+        self.fps_timer.timeout.connect(self._update_fps)
+        self.fps_timer.start(1000)
 
         # Auto-scan for phone on startup
         self.scanner.start_scan()
@@ -252,7 +232,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(conn_bar)
 
         # ── Video Display ──
-        self.video_widget = VideoWidget()
+        self.video_widget = VideoWidget(self.input_handler, self._send_command)
         layout.addWidget(self.video_widget, 1)
 
         # ── Status Bar ──
@@ -294,19 +274,8 @@ class MainWindow(QMainWindow):
         # Decoder → display
         self.decoder.frame_ready.connect(self._on_decoded_frame)
 
-        # Video widget input → handler
-        self.video_widget.mouse_press.connect(self._on_mouse_press)
-        self.video_widget.mouse_release.connect(self._on_mouse_release)
-        self.video_widget.mouse_move.connect(self._on_mouse_move)
-        self.video_widget.mouse_scroll.connect(self._on_mouse_scroll)
-
         # Audio toggle
         self.audio_checkbox.toggled.connect(self._on_audio_toggled)
-
-    def _setup_fps_timer(self):
-        self.fps_timer = QTimer()
-        self.fps_timer.timeout.connect(self._update_fps)
-        self.fps_timer.start(1000)
 
     def _apply_stylesheet(self):
         self.setStyleSheet("""
@@ -390,6 +359,11 @@ class MainWindow(QMainWindow):
                 font-size: 12px;
                 padding: 0 8px;
             }
+            QToolTip {
+                background-color: #1A1A2E;
+                color: #FFFFFF;
+                border: 1px solid #3D3D5C;
+            }
         """)
 
     # ── Connection handlers ──
@@ -440,7 +414,6 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"Reconnecting... (attempt {attempt})")
 
     def _on_info_received(self, info: dict):
-        self.phone_info = info
         device = info.get("device", "Unknown")
         sw = info.get("screenWidth", 0)
         sh = info.get("screenHeight", 0)
@@ -475,118 +448,78 @@ class MainWindow(QMainWindow):
     def _on_scan_complete(self, found: list):
         self.scan_btn.setEnabled(True)
         self.scan_btn.setText("Scan")
+        self.ip_input.setPlaceholderText("Phone IP address")
+        if found:
+            self.ip_input.setText(found[0])
+        if self.connected:
+            return
 
         if len(found) == 1:
-            # Exactly one server found — auto-fill and connect
-            self.ip_input.setText(found[0])
-            self.ip_input.setPlaceholderText("Phone IP address")
-            if not self.connected:
-                self.status_label.setText(f"Found phone at {found[0]}")
-                self._on_connect_clicked()
-        elif len(found) > 1:
-            # Multiple found — fill first, let user pick. Cap the listed IPs so a long
+            # Exactly one server found — auto-connect
+            self.status_label.setText(f"Found phone at {found[0]}")
+            self._on_connect_clicked()
+        elif found:
+            # Multiple found — first is filled in, let user pick. Cap the listed IPs so a long
             # result set can't stretch the status bar (and the window) arbitrarily wide.
-            self.ip_input.setText(found[0])
-            self.ip_input.setPlaceholderText("Phone IP address")
-            if not self.connected:
-                shown = ", ".join(found[:3])
-                if len(found) > 3:
-                    shown += f", +{len(found) - 3} more"
-                self.status_label.setText(f"Found {len(found)} devices: {shown}")
+            shown = ", ".join(found[:3])
+            if len(found) > 3:
+                shown += f", +{len(found) - 3} more"
+            self.status_label.setText(f"Found {len(found)} devices: {shown}")
         else:
-            self.ip_input.setPlaceholderText("Phone IP address")
-            if not self.connected:
-                self.status_label.setText("No phone found — enter IP manually")
+            self.status_label.setText("No phone found — enter IP manually")
 
     # ── Frame routing ──
 
     def _on_frame_received(self, frame_type: int, timestamp: int, data: bytes):
-        if frame_type in (FRAME_VIDEO_CONFIG, FRAME_VIDEO_KEY, FRAME_VIDEO_DELTA):
-            self.decoder.feed_frame(frame_type, timestamp, data)
-        elif frame_type == FRAME_AUDIO_DATA:
+        # Video goes straight from the WS thread to the decoder; only audio arrives here
+        if frame_type == FRAME_AUDIO_DATA:
             self.audio_player.feed(data)
 
-    @pyqtSlot(QImage)
     def _on_decoded_frame(self, image: QImage):
         self.video_widget.update_frame(image)
         self.frame_count += 1
 
     def _update_fps(self):
         if self.connected:
-            self.fps = self.frame_count
-            self.fps_label.setText(f"{self.fps} FPS")
+            self.fps_label.setText(f"{self.frame_count} FPS")
             self.frame_count = 0
 
     # ── Input handlers ──
 
-    def _on_mouse_press(self, x, y):
-        cmd = self.input_handler.on_press(x, y)
-        if cmd:
-            self._send_command(cmd)
-
-    def _on_mouse_release(self, x, y):
-        cmd = self.input_handler.on_release(x, y)
-        if cmd:
-            self._send_command(cmd)
-
-    def _on_mouse_move(self, x, y):
-        self.input_handler.on_move(x, y)
-
-    def _on_mouse_scroll(self, x, y, dx, dy):
-        cmd = self.input_handler.on_scroll(x, y, dx, dy)
-        if cmd:
-            self._send_command(cmd)
-
     def keyPressEvent(self, event: QKeyEvent):
-        # Allow auto-repeat for text input and backspace (holding key = repeated chars)
-        # Only block auto-repeat for system keys (back, home, etc.)
-        if event.isAutoRepeat():
-            key = event.key()
-            # Allow repeat for text-producing keys, backspace, delete, enter
-            is_text_key = (event.text() and event.text().isprintable()) or key in (
-                Qt.Key.Key_Backspace, Qt.Key.Key_Delete,
-                Qt.Key.Key_Return, Qt.Key.Key_Enter,
-            )
-            if not is_text_key:
-                return
         cmd = self.input_handler.on_key_press(event)
+        # Holding a key repeats text/backspace/delete/enter, but never system keys (back, home, ...)
+        if event.isAutoRepeat() and not (cmd and cmd["type"] in ("text", "backspace", "delete")):
+            return
         if cmd:
             self._send_command(cmd)
-        else:
-            # F11 toggles fullscreen
-            if event.key() == Qt.Key.Key_F11:
-                if self.isFullScreen():
-                    self.showNormal()
-                else:
-                    self.showFullScreen()
+        elif event.key() == Qt.Key.Key_F11:
+            if self.isFullScreen():
+                self.showNormal()
             else:
-                super().keyPressEvent(event)
+                self.showFullScreen()
+        else:
+            super().keyPressEvent(event)
 
     def _send_command(self, cmd: dict):
         if self.connected:
             self.ws_client.send_command(cmd)
 
-    def _send_key_action(self, action: str):
-        self._send_command({"type": "key", "action": action})
-
     # ── Audio toggle ──
 
     def _on_audio_toggled(self, checked: bool):
-        if self.connected:
-            self.ws_client.send_command({
-                "type": "toggle_audio",
-                "enabled": checked
-            })
-            if checked:
-                self.audio_player.start()
-            else:
-                self.audio_player.stop()
+        if not self.connected:
+            return
+        self._send_command({"type": "toggle_audio", "enabled": checked})
+        if checked:
+            self.audio_player.start()
+        else:
+            self.audio_player.stop()
 
     # ── Cleanup ──
 
     def closeEvent(self, event):
-        if self.connected:
-            self.ws_client.disconnect()
+        self.ws_client.disconnect()
         self.decoder.stop()
         self.audio_player.stop()
         super().closeEvent(event)

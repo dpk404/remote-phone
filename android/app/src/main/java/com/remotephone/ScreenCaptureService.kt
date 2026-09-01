@@ -12,6 +12,7 @@ import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioPlaybackCaptureConfiguration
 import android.media.AudioRecord
 import android.media.MediaCodec
@@ -25,7 +26,6 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 class ScreenCaptureService : Service() {
 
@@ -68,9 +68,6 @@ class ScreenCaptureService : Service() {
 
     // Network
     private var webSocketServer: MirrorWebSocketServer? = null
-
-    // Reusable header buffer to avoid per-frame allocation
-    private val headerBuffer = ByteBuffer.allocate(9).apply { order(ByteOrder.BIG_ENDIAN) }
 
     private var isRunning = false
     private var screenWidth = 0
@@ -151,15 +148,8 @@ class ScreenCaptureService : Service() {
         screenWidth = screenWidth and (-2)
         screenHeight = screenHeight and (-2)
 
-        // Setup H.264 video encoder — tuned for low-latency streaming
-        val videoFormat = MediaFormat.createVideoFormat(
-            MediaFormat.MIMETYPE_VIDEO_AVC, screenWidth, screenHeight
-        ).apply {
-            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_BIT_RATE, calculateBitrate(screenWidth, screenHeight))
-            setInteger(MediaFormat.KEY_FRAME_RATE, 30)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1) // keyframe every 1s for faster error recovery
-            setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+        // H.264 encoder tuned for low-latency streaming: base format plus optional keys
+        val videoFormat = baseVideoFormat().apply {
             // Reduce encoder output buffering for lower latency
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
@@ -172,23 +162,14 @@ class ScreenCaptureService : Service() {
         }
 
         // Some hardware encoders (common on LineageOS/custom ROMs) reject the profile/level or
-        // optional keys with IllegalArgumentException. Fall back to a minimal compatible config.
+        // optional keys with IllegalArgumentException. Fall back to the base format.
         val encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
         try {
             encoder.configure(videoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         } catch (e: IllegalArgumentException) {
             Log.w(TAG, "Encoder config failed with optimized format, retrying with baseline", e)
             encoder.reset()
-            val fallbackFormat = MediaFormat.createVideoFormat(
-                MediaFormat.MIMETYPE_VIDEO_AVC, screenWidth, screenHeight
-            ).apply {
-                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-                setInteger(MediaFormat.KEY_BIT_RATE, calculateBitrate(screenWidth, screenHeight))
-                setInteger(MediaFormat.KEY_FRAME_RATE, 30)
-                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-                setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
-            }
-            encoder.configure(fallbackFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            encoder.configure(baseVideoFormat(), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         }
         videoEncoder = encoder
 
@@ -215,7 +196,7 @@ class ScreenCaptureService : Service() {
             screenWidth = screenWidth,
             screenHeight = screenHeight,
             audioAvailable = audioAvailable,
-            onControlCommand = { command -> handleControlCommand(command) }
+            onControlCommand = { RemoteAccessibilityService.handleCommand(it) }
         )
         webSocketServer!!.start()
 
@@ -226,6 +207,16 @@ class ScreenCaptureService : Service() {
 
         Log.i(TAG, "Screen capture started: ${screenWidth}x${screenHeight} on port $WS_PORT")
     }
+
+    /** The minimal H.264 format every encoder accepts; optional low-latency keys are layered on top. */
+    private fun baseVideoFormat(): MediaFormat =
+        MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, screenWidth, screenHeight).apply {
+            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+            setInteger(MediaFormat.KEY_BIT_RATE, calculateBitrate(screenWidth, screenHeight))
+            setInteger(MediaFormat.KEY_FRAME_RATE, 30)
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1) // keyframe every 1s for faster error recovery
+            setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+        }
 
     private fun calculateBitrate(width: Int, height: Int): Int {
         // Adaptive bitrate: ~8 bits per pixel for high quality over WiFi
@@ -301,13 +292,13 @@ class ScreenCaptureService : Service() {
     fun setAudioEnabled(enabled: Boolean) {
         if (!audioAvailable) return
 
-        val audioManager = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
         if (enabled && !audioEnabled) {
             audioEnabled = true
             // Mute phone speakers so audio only plays on the Linux client
-            savedMusicVolume = audioManager.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
-            audioManager.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0)
+            savedMusicVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
             audioRecord?.startRecording()
             audioThread = Thread({ readAudioCapture() }, "AudioThread").apply { start() }
             Log.i(TAG, "Audio streaming enabled — phone speakers muted")
@@ -316,7 +307,7 @@ class ScreenCaptureService : Service() {
             try { audioRecord?.stop() } catch (_: Exception) {}
             // Restore phone speaker volume
             if (savedMusicVolume > 0) {
-                audioManager.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, savedMusicVolume, 0)
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, savedMusicVolume, 0)
             }
             Log.i(TAG, "Audio streaming disabled — phone speakers restored")
         }
@@ -329,13 +320,8 @@ class ScreenCaptureService : Service() {
             try {
                 val bytesRead = audioRecord?.read(buffer, 0, buffer.size) ?: -1
                 if (bytesRead > 0) {
-                    val data = if (bytesRead < buffer.size) {
-                        buffer.copyOfRange(0, bytesRead)
-                    } else {
-                        buffer.clone()
-                    }
                     val timestamp = (System.nanoTime() / 1_000_000).toInt()
-                    sendFrame(FRAME_AUDIO_DATA, timestamp, data)
+                    sendFrame(FRAME_AUDIO_DATA, timestamp, buffer.copyOf(bytesRead))
                 }
             } catch (e: Exception) {
                 if (audioEnabled) Log.e(TAG, "Audio capture error", e)
@@ -344,22 +330,11 @@ class ScreenCaptureService : Service() {
     }
 
     private fun sendFrame(type: Byte, timestamp: Int, data: ByteArray) {
-        // 9-byte header: [type(1)] [timestamp(4 BE)] [size(4 BE)]
-        // Reuse headerBuffer to avoid per-frame allocation
-        headerBuffer.clear()
-        headerBuffer.put(type)
-        headerBuffer.putInt(timestamp)
-        headerBuffer.putInt(data.size)
-
-        val frame = ByteArray(9 + data.size)
-        System.arraycopy(headerBuffer.array(), 0, frame, 0, 9)
-        System.arraycopy(data, 0, frame, 9, data.size)
-
+        // 9-byte big-endian header: [type(1)] [timestamp(4)] [size(4)], then the payload
+        val frame = ByteBuffer.allocate(9 + data.size)
+            .put(type).putInt(timestamp).putInt(data.size).put(data)
+            .array()
         webSocketServer?.broadcastFrame(frame)
-    }
-
-    private fun handleControlCommand(command: String) {
-        RemoteAccessibilityService.handleCommand(command)
     }
 
     private fun stopCapture() {
@@ -367,13 +342,7 @@ class ScreenCaptureService : Service() {
         isRunning = false
 
         // Restore phone volume if audio was streaming
-        if (audioEnabled && savedMusicVolume > 0) {
-            try {
-                val audioManager = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-                audioManager.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, savedMusicVolume, 0)
-            } catch (_: Exception) {}
-        }
-        audioEnabled = false
+        try { setAudioEnabled(false) } catch (_: Exception) {}
 
         // Stop threads
         videoThread?.interrupt()

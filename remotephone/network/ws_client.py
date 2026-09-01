@@ -8,7 +8,6 @@ Auto-reconnects on connection loss with exponential backoff.
 import json
 import struct
 import threading
-import time
 import logging
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -16,6 +15,18 @@ from PyQt6.QtCore import QObject, pyqtSignal
 import websocket
 
 log = logging.getLogger("ws_client")
+
+# Frame type markers in the 9-byte binary header (must match the Android side)
+FRAME_VIDEO_CONFIG = 0x00
+FRAME_VIDEO_KEY = 0x01
+FRAME_VIDEO_DELTA = 0x02
+FRAME_AUDIO_CONFIG = 0x10
+FRAME_AUDIO_DATA = 0x11
+
+# Video frame types that bypass Qt signals and go directly to the decoder
+_VIDEO_TYPES = {FRAME_VIDEO_CONFIG, FRAME_VIDEO_KEY, FRAME_VIDEO_DELTA}
+_TYPE_NAMES = {FRAME_VIDEO_CONFIG: "CONFIG", FRAME_VIDEO_KEY: "KEY", FRAME_VIDEO_DELTA: "DELTA",
+               FRAME_AUDIO_CONFIG: "AUDIO_CFG", FRAME_AUDIO_DATA: "AUDIO"}
 
 # Reconnect settings
 _RECONNECT_BASE = 1.0     # initial retry delay (seconds)
@@ -34,9 +45,6 @@ class WebSocketClient(QObject):
     info_received = pyqtSignal(dict)
     error_occurred = pyqtSignal(str)
 
-    # Video frame types that bypass Qt signals and go directly to decoder
-    _VIDEO_TYPES = {0x00, 0x01, 0x02}  # CONFIG, KEY, DELTA
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self._ws = None
@@ -45,8 +53,7 @@ class WebSocketClient(QObject):
         self._lock = threading.Lock()
         self._frame_count = 0
         self._video_decoder = None
-        self._should_reconnect = False  # True while user wants to stay connected
-        self._stop_event = threading.Event()
+        self._stop_event = threading.Event()  # set once the user no longer wants to stay connected
         self._local_close = False  # True when WE initiated the disconnect
 
     def set_video_decoder(self, decoder):
@@ -62,7 +69,6 @@ class WebSocketClient(QObject):
             self._thread.join(timeout=2.0)
         self._url = url
         self._frame_count = 0
-        self._should_reconnect = True
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_with_reconnect, daemon=True, name="WSClient")
         self._thread.start()
@@ -72,7 +78,7 @@ class WebSocketClient(QObject):
         attempt = 0
         delay = _RECONNECT_BASE
 
-        while self._should_reconnect and not self._stop_event.is_set():
+        while not self._stop_event.is_set():
             try:
                 self._ws = websocket.WebSocketApp(
                     self._url,
@@ -81,7 +87,6 @@ class WebSocketClient(QObject):
                     on_error=self._on_error,
                     on_close=self._on_close,
                 )
-                # Reset backoff on new attempt
                 self._ws.run_forever(
                     ping_interval=5,
                     ping_timeout=3,
@@ -91,7 +96,7 @@ class WebSocketClient(QObject):
                 log.error(f"WebSocket run error: {e}")
 
             # If we get here, connection closed or failed
-            if not self._should_reconnect or self._stop_event.is_set():
+            if self._stop_event.is_set():
                 break
 
             attempt += 1
@@ -131,13 +136,6 @@ class WebSocketClient(QObject):
                 data = data.decode('utf-8', errors='replace')
             self._handle_text(data)
 
-    def _on_message(self, ws, message):
-        """Fallback handler — on_data should handle most cases."""
-        if isinstance(message, bytes):
-            self._handle_binary(message)
-        else:
-            self._handle_text(message)
-
     def _handle_binary(self, data: bytes):
         """Parse the 9-byte header and route the frame."""
         if len(data) < 9:
@@ -150,12 +148,11 @@ class WebSocketClient(QObject):
 
         self._frame_count += 1
         if self._frame_count <= 5 or self._frame_count % 300 == 0:
-            type_names = {0: "CONFIG", 1: "KEY", 2: "DELTA", 0x10: "AUDIO_CFG", 0x11: "AUDIO"}
-            log.info(f"Frame #{self._frame_count}: type={type_names.get(frame_type, hex(frame_type))}, "
+            log.info(f"Frame #{self._frame_count}: type={_TYPE_NAMES.get(frame_type, hex(frame_type))}, "
                      f"ts={timestamp}, payload={len(payload)}B")
 
         # Video frames: feed directly to decoder (no Qt signal hop)
-        if frame_type in self._VIDEO_TYPES and self._video_decoder is not None:
+        if frame_type in _VIDEO_TYPES and self._video_decoder is not None:
             self._video_decoder.feed_frame(frame_type, timestamp, payload)
         else:
             # Audio and other frames go through Qt signal
@@ -178,7 +175,7 @@ class WebSocketClient(QObject):
     def _on_error(self, ws, error):
         err_str = str(error)
         # Don't spam "Connection refused" during reconnect attempts
-        if "Connection refused" in err_str and self._should_reconnect:
+        if "Connection refused" in err_str and not self._stop_event.is_set():
             log.debug(f"WebSocket error (will retry): {error}")
         else:
             log.error(f"WebSocket error: {error}")
@@ -190,7 +187,6 @@ class WebSocketClient(QObject):
         clean = close_status_code == 1000 or self._local_close
         self._local_close = False
         if clean:
-            self._should_reconnect = False
             self._stop_event.set()
         with self._lock:
             self._ws = None
@@ -207,7 +203,6 @@ class WebSocketClient(QObject):
 
     def disconnect(self):
         """Cleanly close the WebSocket connection and stop reconnect loop."""
-        self._should_reconnect = False
         self._stop_event.set()
         self._local_close = True
         with self._lock:

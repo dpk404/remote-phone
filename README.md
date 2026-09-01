@@ -83,11 +83,11 @@ chmod +x run.sh
 # Windows
 python -m venv venv
 venv\Scripts\activate
-pip install -r remotephone\requirements.txt
-python -m remotephone.main
+pip install -e .
+remotephone
 ```
 
-The launcher script creates a virtual environment and installs the dependencies into it.
+The launcher script creates a virtual environment and installs the package into it.
 
 ---
 
@@ -186,8 +186,7 @@ remote_phone/
 │   ├── network/scanner.py      # Network auto-discovery
 │   ├── decoder/video_decoder.py # H.264 decoding (PyAV/FFmpeg)
 │   ├── decoder/audio_player.py  # PCM audio playback
-│   ├── input/input_handler.py   # Mouse/keyboard + gesture detection
-│   └── requirements.txt
+│   └── input/input_handler.py   # Mouse/keyboard + gesture detection
 │
 ├── run.sh                      # Auto-setup launcher for Linux/macOS (running from source)
 ├── pyproject.toml              # Python package config
