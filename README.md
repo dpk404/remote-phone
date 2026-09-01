@@ -1,8 +1,8 @@
 # RemotePhone
 
-**Mirror and control your Android phone from your Linux desktop — no USB debugging required.**
+**Mirror and control your Android phone from your desktop, no USB debugging required.**
 
-RemotePhone is a two-part system: an Android app that captures and streams your phone's screen, and a Linux desktop client that displays the stream and lets you control the phone with your mouse and keyboard.
+RemotePhone is a two-part system: an Android app that captures and streams your phone's screen, and a desktop client for Linux, macOS, and Windows that displays the stream and lets you control the phone with your mouse and keyboard.
 
 Unlike scrcpy (which requires ADB/USB debugging), RemotePhone works entirely over WiFi using standard Android APIs.
 
@@ -25,7 +25,7 @@ Unlike scrcpy (which requires ADB/USB debugging), RemotePhone works entirely ove
 
 ```
 ┌─────────────────────┐         WebSocket (WiFi)         ┌──────────────────────┐
-│    Android Phone     │ <------------------------------> │   Linux Desktop      │
+│    Android Phone     │ <------------------------------> │   Desktop Client     │
 │                      │                                  │                      │
 │  MediaProjection --> │  H.264 video frames ---------->  │  PyAV decoder        │
 │  MediaCodec H.264    │  Raw PCM audio --------------->  │  sounddevice player  │
@@ -55,42 +55,46 @@ Unlike scrcpy (which requires ADB/USB debugging), RemotePhone works entirely ove
 3. Connect your phone (or use wireless install) and click **Run**
 4. Enable the accessibility service as above
 
-### 2. Linux Client
+### 2. Desktop Client (Linux, macOS, Windows)
 
-**Requirements:** Python 3.10+, FFmpeg libraries.
+**Requirements:** Python 3.10+. The pip wheels bundle FFmpeg on every platform and PortAudio on macOS and Windows. Linux needs the system PortAudio library for audio playback.
 
-**Option A — Install via pip (recommended):**
+**Option A: install via pip (recommended)**
 
 ```bash
-# Install system dependencies (Ubuntu/Debian)
-sudo apt install ffmpeg libportaudio2
+# Linux only (Debian/Ubuntu): PortAudio for audio playback
+sudo apt install libportaudio2
 
-# Install RemotePhone
+# All platforms
 pip install remote-phone
-
-# Run it
 remotephone
 ```
 
-**Option B — Run from source:**
+**Option B: run from source**
 
 ```bash
-# Install system dependencies (Ubuntu/Debian)
-sudo apt install python3 python3-venv python3-pip libportaudio2 ffmpeg
+# Linux only (Debian/Ubuntu). macOS and Windows just need Python 3.10+.
+sudo apt install python3 python3-venv python3-pip libportaudio2
 
-# Extract the tarball (if downloaded from Releases), then run:
+# Linux / macOS: extract the tarball (if downloaded from Releases), then run
 chmod +x run.sh
 ./run.sh
+
+# Windows
+python -m venv venv
+venv\Scripts\activate
+pip install -r remotephone\requirements.txt
+python -m remotephone.main
 ```
 
-The launcher script automatically creates a virtual environment and installs Python dependencies.
+The launcher script creates a virtual environment and installs the dependencies into it.
 
 ---
 
 ## Usage
 
 1. **On your phone:** Open RemotePhone -> tap **"Start Mirroring"** -> grant the screen capture permission
-2. **On your laptop:** Run the Linux client — it auto-scans the network and connects if one phone is found
+2. **On your computer:** Run the desktop client. It auto-scans the network and connects if one phone is found
 3. If auto-connect doesn't work, enter the phone's IP (shown in the app) and click **Connect**
 
 ### Controls
@@ -125,7 +129,7 @@ When you tap a text field on the phone, you can type directly from your desktop 
 
 ### Audio
 
-Toggle the **Audio** checkbox in the Linux client to stream phone audio to your laptop. When enabled, the phone speakers are automatically muted so audio only plays on the desktop. Volume is restored when audio streaming is disabled or mirroring stops.
+Toggle the **Audio** checkbox in the desktop client to stream phone audio to your computer. When enabled, the phone speakers are automatically muted so audio only plays on the desktop. Volume is restored when audio streaming is disabled or mirroring stops.
 
 Requires Android 10+ and `libportaudio2` on Linux.
 
@@ -185,7 +189,7 @@ remote_phone/
 │   ├── input/input_handler.py   # Mouse/keyboard + gesture detection
 │   └── requirements.txt
 │
-├── run.sh                      # Auto-setup launcher (for running from source)
+├── run.sh                      # Auto-setup launcher for Linux/macOS (running from source)
 ├── pyproject.toml              # Python package config
 ├── .github/workflows/          # CI/CD (APK build + PyPI publish)
 └── README.md

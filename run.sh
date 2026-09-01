@@ -1,5 +1,5 @@
 #!/bin/bash
-# RemotePhone Linux Client launcher
+# RemotePhone desktop client launcher (Linux / macOS)
 # Automatically sets up a virtual environment, installs deps, and runs the client.
 # For pip users: just run `remotephone` directly instead.
 
@@ -13,8 +13,8 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
-# Check for PortAudio (needed by sounddevice for audio playback)
-if ! ldconfig -p 2>/dev/null | grep -q libportaudio; then
+# Linux only: sounddevice needs the system PortAudio library (the macOS wheel bundles it)
+if command -v ldconfig >/dev/null && ! ldconfig -p | grep -q libportaudio; then
     echo "NOTE: libportaudio2 not found — audio playback will be disabled."
     echo "  Install with: sudo apt install libportaudio2"
 fi
