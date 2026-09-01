@@ -1,20 +1,26 @@
 """
 RemotePhone — Network Scanner
-Scans the local subnet for devices with RemotePhone WebSocket server (port 8765).
-Uses parallel TCP connect probes for fast discovery.
+Scans the local subnet for devices running a RemotePhone WebSocket server (port 8765).
+Discovery is two-stage: a fast parallel TCP connect probe narrows the subnet to hosts
+with the port open, then each candidate is verified with the RemotePhone WebSocket
+hello/info handshake so unrelated services (or networks that ACK every address) are
+not reported as devices.
 """
 
+import json
 import socket
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import websocket
 from PyQt6.QtCore import QObject, pyqtSignal
 
 log = logging.getLogger("scanner")
 
 DEFAULT_PORT = 8765
-CONNECT_TIMEOUT = 0.3  # seconds per probe
+CONNECT_TIMEOUT = 0.3  # seconds per TCP probe
+VERIFY_TIMEOUT = 1.0   # seconds for the WebSocket handshake + info reply
 MAX_WORKERS = 80       # parallel connection attempts
 
 
@@ -65,6 +71,49 @@ def probe_host(ip: str, port: int) -> str | None:
     return None
 
 
+def is_remotephone_server(ip: str, port: int) -> bool:
+    """
+    Confirm the host is an actual RemotePhone server (not just any open port).
+
+    Performs the WebSocket handshake, sends a `hello`, and waits for the server's
+    `info` reply. A bare open port — or a network/firewall that ACKs every address —
+    will fail the handshake or never send a valid `info`, so it is rejected.
+    """
+    ws = None
+    try:
+        ws = websocket.create_connection(f"ws://{ip}:{port}", timeout=VERIFY_TIMEOUT)
+        ws.send(json.dumps({"type": "hello", "version": 1, "client": "RemotePhone-Scan"}))
+        # On connect the server may first push a binary video-config frame; the
+        # text `info` reply follows the hello. Skip a few non-text frames to find it.
+        for _ in range(4):
+            msg = ws.recv()
+            if isinstance(msg, str) and msg:
+                try:
+                    obj = json.loads(msg)
+                except json.JSONDecodeError:
+                    continue
+                if obj.get("type") == "info":
+                    return True
+        return False
+    except Exception:
+        return False
+    finally:
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
+
+
+def probe_and_verify(ip: str, port: int) -> str | None:
+    """Fast TCP probe, then verify the host actually speaks the RemotePhone protocol."""
+    if probe_host(ip, port) is None:
+        return None
+    if is_remotephone_server(ip, port):
+        return ip
+    return None
+
+
 class NetworkScanner(QObject):
     """Scans local network for RemotePhone servers. Emits results via Qt signals."""
 
@@ -106,7 +155,7 @@ class NetworkScanner(QObject):
                 targets.append(f"{prefix}{i}")
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {pool.submit(probe_host, ip, port): ip for ip in targets}
+            futures = {pool.submit(probe_and_verify, ip, port): ip for ip in targets}
             for future in as_completed(futures):
                 result = future.result()
                 if result:

@@ -484,11 +484,15 @@ class MainWindow(QMainWindow):
                 self.status_label.setText(f"Found phone at {found[0]}")
                 self._on_connect_clicked()
         elif len(found) > 1:
-            # Multiple found — fill first, let user pick
+            # Multiple found — fill first, let user pick. Cap the listed IPs so a long
+            # result set can't stretch the status bar (and the window) arbitrarily wide.
             self.ip_input.setText(found[0])
             self.ip_input.setPlaceholderText("Phone IP address")
             if not self.connected:
-                self.status_label.setText(f"Found {len(found)} devices: {', '.join(found)}")
+                shown = ", ".join(found[:3])
+                if len(found) > 3:
+                    shown += f", +{len(found) - 3} more"
+                self.status_label.setText(f"Found {len(found)} devices: {shown}")
         else:
             self.ip_input.setPlaceholderText("Phone IP address")
             if not self.connected:
