@@ -18,6 +18,8 @@ import time
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeyEvent
 
+_K = Qt.Key
+
 
 class InputHandler:
     """Maps desktop input events to phone touch/key commands."""
@@ -28,6 +30,30 @@ class InputHandler:
     HSCROLL_BACK_THRESHOLD = 400.0  # cumulative horizontal scroll to trigger back (higher = less sensitive)
 
     SCROLL_COOLDOWN = 0.4    # seconds to ignore clicks after scroll (trackpad ghost taps)
+
+    # System keys → phone key actions
+    KEY_ACTIONS = {
+        _K.Key_Escape: "back",
+        _K.Key_Home: "home",
+        _K.Key_F2: "recents",
+        _K.Key_F5: "notifications",
+        _K.Key_F6: "quick_settings",
+        _K.Key_F10: "power",
+    }
+    # Editing keys → commands
+    KEY_COMMANDS = {
+        _K.Key_Backspace: {"type": "backspace"},
+        _K.Key_Delete: {"type": "delete"},
+        _K.Key_Return: {"type": "text", "content": "\n"},
+        _K.Key_Enter: {"type": "text", "content": "\n"},
+    }
+    # Ctrl+<key> → clipboard/selection commands
+    CTRL_COMMANDS = {
+        _K.Key_A: "select_all",
+        _K.Key_C: "copy",
+        _K.Key_V: "paste",
+        _K.Key_X: "cut",
+    }
 
     def __init__(self):
         self._press_x = 0.0
@@ -43,18 +69,9 @@ class InputHandler:
 
     def reset(self):
         """Clear all in-progress gesture and scroll state (call on disconnect)."""
-        self._press_x = 0.0
-        self._press_y = 0.0
-        self._press_time = 0.0
-        self._last_x = 0.0
-        self._last_y = 0.0
-        self._moved = False
-        self._hscroll_accum = 0.0
-        self._hscroll_time = 0.0
-        self._last_scroll_time = 0.0
-        self._suppressed = False
+        self.__init__()
 
-    def on_press(self, x: float, y: float) -> dict | None:
+    def on_press(self, x: float, y: float):
         """Record the start of a mouse press."""
         self._press_x = x
         self._press_y = y
@@ -62,14 +79,8 @@ class InputHandler:
         self._last_y = y
         self._press_time = time.time()
         self._moved = False
-
         # Suppress ghost taps right after scrolling (trackpad artifact)
-        if self._press_time - self._last_scroll_time < self.SCROLL_COOLDOWN:
-            self._suppressed = True
-            return None
-
-        self._suppressed = False
-        return None
+        self._suppressed = self._press_time - self._last_scroll_time < self.SCROLL_COOLDOWN
 
     def on_move(self, x: float, y: float):
         """Track mouse movement during a drag."""
@@ -170,47 +181,12 @@ class InputHandler:
         System keys → key commands, printable characters → text input.
         """
         key = event.key()
-
-        # System key mappings
-        key_map = {
-            Qt.Key.Key_Escape: "back",
-            Qt.Key.Key_Home: "home",
-            Qt.Key.Key_F2: "recents",
-            Qt.Key.Key_F5: "notifications",
-            Qt.Key.Key_F6: "quick_settings",
-            Qt.Key.Key_F10: "power",
-        }
-
-        if key in key_map:
-            return {"type": "key", "action": key_map[key]}
-
-        # Backspace → delete last character in focused text field
-        if key == Qt.Key.Key_Backspace:
-            return {"type": "backspace"}
-
-        # Delete key
-        if key == Qt.Key.Key_Delete:
-            return {"type": "delete"}
-
-        # Enter / Return
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            return {"type": "text", "content": "\n"}
-
-        # Select all (Ctrl+A)
-        if key == Qt.Key.Key_A and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            return {"type": "select_all"}
-
-        # Copy (Ctrl+C)
-        if key == Qt.Key.Key_C and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            return {"type": "copy"}
-
-        # Paste (Ctrl+V)
-        if key == Qt.Key.Key_V and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            return {"type": "paste"}
-
-        # Cut (Ctrl+X)
-        if key == Qt.Key.Key_X and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            return {"type": "cut"}
+        if key in self.KEY_ACTIONS:
+            return {"type": "key", "action": self.KEY_ACTIONS[key]}
+        if key in self.KEY_COMMANDS:
+            return self.KEY_COMMANDS[key]
+        if key in self.CTRL_COMMANDS and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            return {"type": self.CTRL_COMMANDS[key]}
 
         # Printable text
         text = event.text()

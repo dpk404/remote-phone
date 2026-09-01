@@ -2,7 +2,6 @@ package com.remotephone
 
 import android.app.Activity
 import android.content.Intent
-import android.graphics.Color
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
@@ -10,18 +9,17 @@ import android.provider.Settings
 import android.widget.Button
 import android.widget.Switch
 import android.widget.TextView
+import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
 import java.net.Inet4Address
 import java.net.NetworkInterface
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : ComponentActivity() {
 
     private lateinit var ipText: TextView
     private lateinit var portText: TextView
     private lateinit var statusDot: TextView
     private lateinit var statusText: TextView
-    private lateinit var clientCount: TextView
     private lateinit var startButton: Button
     private lateinit var audioToggle: Switch
     private lateinit var audioSubtext: TextView
@@ -37,7 +35,7 @@ class MainActivity : AppCompatActivity() {
             startScreenCapture(result.resultCode, result.data!!)
         } else {
             statusText.text = "Permission denied"
-            statusDot.setTextColor(Color.parseColor("#EF4444"))
+            statusDot.setTextColor(getColor(R.color.status_red))
         }
     }
 
@@ -50,7 +48,6 @@ class MainActivity : AppCompatActivity() {
         portText = findViewById(R.id.portText)
         statusDot = findViewById(R.id.statusDot)
         statusText = findViewById(R.id.statusText)
-        clientCount = findViewById(R.id.clientCount)
         startButton = findViewById(R.id.startButton)
         audioToggle = findViewById(R.id.audioToggle)
         audioSubtext = findViewById(R.id.audioSubtext)
@@ -123,7 +120,7 @@ class MainActivity : AppCompatActivity() {
         startButton.text = "Stop Mirroring"
         statusText.text = "Streaming"
         statusDot.text = "●"
-        statusDot.setTextColor(Color.parseColor("#10B981"))
+        statusDot.setTextColor(getColor(R.color.status_green))
     }
 
     private fun stopScreenCapture() {
@@ -136,21 +133,20 @@ class MainActivity : AppCompatActivity() {
         startButton.text = "Start Mirroring"
         statusText.text = "Ready to stream"
         statusDot.text = "○"
-        statusDot.setTextColor(Color.parseColor("#9CA3AF"))
-        clientCount.text = ""
+        statusDot.setTextColor(getColor(R.color.text_muted))
     }
 
     private fun updateAccessibilityStatus() {
         if (RemoteAccessibilityService.isRunning()) {
             accessibilityStatus.text = "Accessibility Service: ✓ Enabled"
-            accessibilityStatus.setTextColor(Color.parseColor("#10B981"))
+            accessibilityStatus.setTextColor(getColor(R.color.status_green))
         } else {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 accessibilityStatus.text = "Accessibility Service: Not enabled\n⚠ On Android 13+: go to Settings → Apps → RemotePhone → ⋮ menu → \"Allow restricted settings\" first"
             } else {
                 accessibilityStatus.text = "Accessibility Service: Not enabled"
             }
-            accessibilityStatus.setTextColor(Color.parseColor("#F59E0B"))
+            accessibilityStatus.setTextColor(getColor(R.color.status_amber))
         }
     }
 

@@ -52,8 +52,6 @@ class MirrorWebSocketServer(
                         put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
                         put("screenWidth", screenWidth)
                         put("screenHeight", screenHeight)
-                        put("streamWidth", screenWidth)
-                        put("streamHeight", screenHeight)
                         put("audioAvailable", audioAvailable)
                         put("androidVersion", Build.VERSION.RELEASE)
                     }

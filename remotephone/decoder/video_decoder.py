@@ -13,12 +13,9 @@ import av
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QImage
 
-log = logging.getLogger("video_decoder")
+from remotephone.network.ws_client import FRAME_VIDEO_CONFIG, FRAME_VIDEO_KEY, FRAME_VIDEO_DELTA
 
-# Frame type constants
-FRAME_VIDEO_CONFIG = 0x00
-FRAME_VIDEO_KEY = 0x01
-FRAME_VIDEO_DELTA = 0x02
+log = logging.getLogger("video_decoder")
 
 # Performance: drop frames when queue exceeds this depth
 _DROP_THRESHOLD = 3
@@ -84,7 +81,6 @@ class VideoDecoder(QObject):
         codec.options = {
             'flags': '+low_delay+output_corrupt',
             'flags2': '+fast',
-            'tune': 'zerolatency',
         }
 
         try:
@@ -96,8 +92,6 @@ class VideoDecoder(QObject):
         got_first_keyframe = False
 
         while self._running:
-            frame_data = None
-
             with self._condition:
                 if not self._frame_queue:
                     self._condition.wait(timeout=0.002)  # ~500Hz poll when idle
@@ -109,12 +103,7 @@ class VideoDecoder(QObject):
                     if dropped > 0:
                         log.warning(f"Dropped {dropped} frames (queue was {dropped + len(self._frame_queue)})")
 
-                frame_data = self._frame_queue.popleft()
-
-            if frame_data is None:
-                continue
-
-            frame_type, timestamp, data = frame_data
+                frame_type, _, data = self._frame_queue.popleft()
 
             try:
                 # Config frames: just store, don't decode separately
@@ -139,24 +128,17 @@ class VideoDecoder(QObject):
                 else:
                     feed_data = data
 
-                packet = av.Packet(feed_data)
-                frames = codec.decode(packet)
-
-                for video_frame in frames:
+                for video_frame in codec.decode(av.Packet(feed_data)):
                     self._decoded_count += 1
-
-                    # Convert to RGB24 — single allocation via to_ndarray
-                    arr = video_frame.to_ndarray(format='rgb24')
-                    h, w, ch = arr.shape
-                    bytes_per_line = ch * w
+                    w, h = video_frame.width, video_frame.height
 
                     if self._decoded_count <= 3:
                         log.info(f"Decoded frame #{self._decoded_count}: {w}x{h}")
 
-                    # Single copy: tobytes() produces a bytes object that QImage
-                    # can reference, then .copy() makes a Qt-owned copy for thread safety.
-                    raw = arr.tobytes()
-                    qimg = QImage(raw, w, h, bytes_per_line,
+                    # Repack to RGB24 and hand the single packed plane to QImage;
+                    # .copy() gives Qt its own buffer so the frame can be freed.
+                    plane = video_frame.reformat(format='rgb24').planes[0]
+                    qimg = QImage(bytes(plane), w, h, plane.line_size,
                                   QImage.Format.Format_RGB888).copy()
 
                     self.frame_ready.emit(qimg)

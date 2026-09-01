@@ -2,10 +2,9 @@ package com.remotephone
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Path
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
@@ -38,12 +37,6 @@ class RemoteAccessibilityService : AccessibilityService() {
                         cmd.getDouble("x").toFloat(),
                         cmd.getDouble("y").toFloat()
                     )
-                    "touch_down" -> {
-                        // Immediate touch feedback — currently a no-op since
-                        // AccessibilityService gestures are atomic. The follow-up
-                        // tap/swipe/long_press will execute the actual gesture.
-                        // This exists so the client can send it without error.
-                    }
                     "swipe" -> service.performSwipe(
                         cmd.getDouble("x1").toFloat(),
                         cmd.getDouble("y1").toFloat(),
@@ -62,10 +55,7 @@ class RemoteAccessibilityService : AccessibilityService() {
                         cmd.getDouble("dy").toFloat()
                     )
                     "key" -> service.performKey(cmd.getString("action"))
-                    "text" -> {
-                        val content = cmd.getString("content")
-                        service.performTextInput(content)
-                    }
+                    "text" -> service.performTextInput(cmd.getString("content"))
                     "backspace" -> service.performBackspace()
                     "delete" -> service.performDelete()
                     "select_all" -> service.performSelectAll()
@@ -176,7 +166,7 @@ class RemoteAccessibilityService : AccessibilityService() {
                     parent = parent.parent
                 }
                 // Fallback: tap the center of the node's bounds
-                val rect = android.graphics.Rect()
+                val rect = Rect()
                 node.getBoundsInScreen(rect)
                 if (rect.width() > 0 && rect.height() > 0) {
                     performTap(rect.centerX().toFloat(), rect.centerY().toFloat())
@@ -198,9 +188,6 @@ class RemoteAccessibilityService : AccessibilityService() {
         return null
     }
 
-    /**
-     * Get the real editable text from a node, excluding placeholder/hint text.
-     */
     /**
      * Get the real editable text from a node, excluding placeholder/hint text.
      * Many Android views return the hint via getText() when the field is empty.
@@ -225,8 +212,26 @@ class RemoteAccessibilityService : AccessibilityService() {
         return text
     }
 
+    /** Current selection of [node] as (start, end), ordered and clamped to [text]. Missing cursor = end of text. */
+    private fun selection(node: AccessibilityNodeInfo, text: String): Pair<Int, Int> {
+        val s = node.textSelectionStart.let { if (it < 0) text.length else it }
+        val e = node.textSelectionEnd.let { if (it < 0) text.length else it }
+        return minOf(s, e).coerceIn(0, text.length) to maxOf(s, e).coerceIn(0, text.length)
+    }
+
+    /** Replace the field's text and put the cursor at [cursor]. */
+    private fun setText(node: AccessibilityNodeInfo, text: String, cursor: Int) {
+        node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        })
+        node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, Bundle().apply {
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, cursor)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, cursor)
+        })
+    }
+
     /**
-     * Type text into the currently focused input field by appending to existing text.
+     * Type text into the currently focused input field at the cursor (replacing any selection).
      * For password/PIN fields, clicks the on-screen buttons instead.
      */
     private fun performTextInput(content: String) {
@@ -246,7 +251,7 @@ class RemoteAccessibilityService : AccessibilityService() {
                         for (keyword in listOf("enter", "ok", "confirm", "done", "check")) {
                             val nodes = root.findAccessibilityNodeInfosByText(keyword)
                             for (node in nodes) {
-                                val rect = android.graphics.Rect()
+                                val rect = Rect()
                                 node.getBoundsInScreen(rect)
                                 if (rect.width() > 0) {
                                     performTap(rect.centerX().toFloat(), rect.centerY().toFloat())
@@ -271,55 +276,25 @@ class RemoteAccessibilityService : AccessibilityService() {
             return
         }
 
+        val currentText = getEditableText(node)
+
         if (content == "\n") {
             // Send IME enter action
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
             } else {
-                val currentText = getEditableText(node)
-                val args = Bundle()
-                args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, currentText + "\n")
-                node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                setText(node, currentText + "\n", currentText.length + 1)
             }
             return
         }
 
-        // Get current text and cursor position, append new text at cursor
-        val currentText = getEditableText(node)
-
-        // Try to get selection/cursor position
-        val selStart = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-            node.textSelectionStart.let { if (it < 0) currentText.length else it }
-        } else {
-            currentText.length
-        }
-        val selEnd = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-            node.textSelectionEnd.let { if (it < 0) currentText.length else it }
-        } else {
-            currentText.length
-        }
-
-        // Replace selection (or insert at cursor if no selection)
-        val start = minOf(selStart, selEnd).coerceIn(0, currentText.length)
-        val end = maxOf(selStart, selEnd).coerceIn(0, currentText.length)
-        val newText = currentText.substring(0, start) + content + currentText.substring(end)
-        val newCursor = start + content.length
-
-        val args = Bundle()
-        args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, newText)
-        node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-
-        // Move cursor to after inserted text
-        val cursorArgs = Bundle()
-        cursorArgs.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, newCursor)
-        cursorArgs.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, newCursor)
-        node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, cursorArgs)
-
+        val (start, end) = selection(node, currentText)
+        setText(node, currentText.substring(0, start) + content + currentText.substring(end), start + content.length)
         Log.d(TAG, "Typed '$content' into field")
     }
 
     /**
-     * Delete the character before the cursor (backspace).
+     * Delete the selection, or the character before the cursor (backspace).
      */
     private fun performBackspace() {
         // For password/PIN fields: click the on-screen delete/backspace button
@@ -333,7 +308,7 @@ class RemoteAccessibilityService : AccessibilityService() {
                 if (root != null) {
                     val nodes = root.findAccessibilityNodeInfosByText("delete")
                     for (node in nodes) {
-                        val rect = android.graphics.Rect()
+                        val rect = Rect()
                         node.getBoundsInScreen(rect)
                         if (rect.width() > 0) {
                             performTap(rect.centerX().toFloat(), rect.centerY().toFloat())
@@ -354,65 +329,25 @@ class RemoteAccessibilityService : AccessibilityService() {
 
         val currentText = getEditableText(node)
         if (currentText.isEmpty()) return
-
-        val selStart = node.textSelectionStart.let { if (it < 0) currentText.length else it }
-        val selEnd = node.textSelectionEnd.let { if (it < 0) currentText.length else it }
-
-        val start = minOf(selStart, selEnd).coerceIn(0, currentText.length)
-        val end = maxOf(selStart, selEnd).coerceIn(0, currentText.length)
-
-        val newText: String
-        val newCursor: Int
-        if (start != end) {
-            newText = currentText.substring(0, start) + currentText.substring(end)
-            newCursor = start
-        } else if (start > 0) {
-            newText = currentText.substring(0, start - 1) + currentText.substring(start)
-            newCursor = start - 1
-        } else {
-            return
+        val (start, end) = selection(node, currentText)
+        when {
+            start != end -> setText(node, currentText.substring(0, start) + currentText.substring(end), start)
+            start > 0 -> setText(node, currentText.substring(0, start - 1) + currentText.substring(start), start - 1)
         }
-
-        val args = Bundle()
-        args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, newText)
-        node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-
-        val cursorArgs = Bundle()
-        cursorArgs.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, newCursor)
-        cursorArgs.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, newCursor)
-        node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, cursorArgs)
     }
 
     /**
-     * Delete the character after the cursor (delete key).
+     * Delete the selection, or the character after the cursor (delete key).
      */
     private fun performDelete() {
         val node = findFocusedEditText() ?: return
 
         val currentText = getEditableText(node)
-        val selStart = node.textSelectionStart.let { if (it < 0) currentText.length else it }
-        val selEnd = node.textSelectionEnd.let { if (it < 0) currentText.length else it }
-
-        val start = minOf(selStart, selEnd).coerceIn(0, currentText.length)
-        val end = maxOf(selStart, selEnd).coerceIn(0, currentText.length)
-
-        val newText: String
-        if (start != end) {
-            newText = currentText.substring(0, start) + currentText.substring(end)
-        } else if (end < currentText.length) {
-            newText = currentText.substring(0, start) + currentText.substring(start + 1)
-        } else {
-            return
+        val (start, end) = selection(node, currentText)
+        when {
+            start != end -> setText(node, currentText.substring(0, start) + currentText.substring(end), start)
+            end < currentText.length -> setText(node, currentText.substring(0, start) + currentText.substring(start + 1), start)
         }
-
-        val args = Bundle()
-        args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, newText)
-        node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-
-        val cursorArgs = Bundle()
-        cursorArgs.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, start)
-        cursorArgs.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, start)
-        node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, cursorArgs)
     }
 
     /**
@@ -437,47 +372,25 @@ class RemoteAccessibilityService : AccessibilityService() {
 
     // ---- Gesture implementations ----
 
-    private fun performTap(x: Float, y: Float) {
-        val path = Path().apply { moveTo(x, y) }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 10)
-        val gesture = GestureDescription.Builder().addStroke(stroke).build()
-        dispatchGesture(gesture, object : GestureResultCallback() {
-            override fun onCompleted(gestureDescription: GestureDescription?) {
-                Log.d(TAG, "Tap at ($x, $y) completed")
-            }
-            override fun onCancelled(gestureDescription: GestureDescription?) {
-                Log.w(TAG, "Tap at ($x, $y) cancelled")
-            }
-        }, null)
+    /** Dispatch a single-stroke gesture along [path] lasting [durationMs]. */
+    private fun dispatch(path: Path, durationMs: Long) {
+        val stroke = GestureDescription.StrokeDescription(path, 0, durationMs)
+        dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
     }
 
-    private fun performSwipe(x1: Float, y1: Float, x2: Float, y2: Float, duration: Long) {
-        val path = Path().apply {
-            moveTo(x1, y1)
-            lineTo(x2, y2)
-        }
-        val stroke = GestureDescription.StrokeDescription(path, 0, duration.coerceAtLeast(50))
-        val gesture = GestureDescription.Builder().addStroke(stroke).build()
-        dispatchGesture(gesture, null, null)
-    }
+    private fun performTap(x: Float, y: Float) =
+        dispatch(Path().apply { moveTo(x, y) }, 10)
 
-    private fun performLongPress(x: Float, y: Float, duration: Long) {
-        val path = Path().apply { moveTo(x, y) }
-        val stroke = GestureDescription.StrokeDescription(path, 0, duration.coerceAtLeast(500))
-        val gesture = GestureDescription.Builder().addStroke(stroke).build()
-        dispatchGesture(gesture, null, null)
-    }
+    private fun performSwipe(x1: Float, y1: Float, x2: Float, y2: Float, duration: Long) =
+        dispatch(Path().apply { moveTo(x1, y1); lineTo(x2, y2) }, duration.coerceAtLeast(50))
+
+    private fun performLongPress(x: Float, y: Float, duration: Long) =
+        dispatch(Path().apply { moveTo(x, y) }, duration.coerceAtLeast(500))
 
     private fun performScroll(x: Float, y: Float, dy: Float) {
-        // Map scroll delta to a swipe gesture
-        val distance = dy * 3f  // Scale factor for scroll sensitivity
-        val path = Path().apply {
-            moveTo(x, y)
-            lineTo(x, (y - distance).coerceIn(0f, 10000f))
-        }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 200)
-        val gesture = GestureDescription.Builder().addStroke(stroke).build()
-        dispatchGesture(gesture, null, null)
+        // Map scroll delta to a swipe gesture; 3x is the scroll sensitivity knob
+        val distance = dy * 3f
+        dispatch(Path().apply { moveTo(x, y); lineTo(x, (y - distance).coerceIn(0f, 10000f)) }, 200)
     }
 
     private fun performKey(action: String) {
@@ -488,7 +401,7 @@ class RemoteAccessibilityService : AccessibilityService() {
             "notifications" -> GLOBAL_ACTION_NOTIFICATIONS
             "quick_settings" -> GLOBAL_ACTION_QUICK_SETTINGS
             "power" -> {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     GLOBAL_ACTION_LOCK_SCREEN
                 } else {
                     Log.w(TAG, "Lock screen action requires Android 9+")

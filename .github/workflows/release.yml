@@ -64,7 +64,7 @@ jobs:
           VERSION=${GITHUB_REF#refs/tags/v}
           tar -czf RemotePhone-linux-${VERSION}.tar.gz \
             --transform "s|^|RemotePhone-linux-${VERSION}/|" \
-            run.sh remotephone/
+            run.sh pyproject.toml README.md LICENSE remotephone/
 
       - name: Upload client artifact
         uses: actions/upload-artifact@v4
