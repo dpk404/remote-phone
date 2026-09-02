@@ -43,9 +43,10 @@ class VideoDecoder(QObject):
         if self._running:
             return
         self._running = True
-        self._config_data = None
         self._decoded_count = 0
-        self._frame_queue.clear()
+        # Do not clear _config_data or the queue here: the server pushes the cached
+        # SPS/PPS the instant the socket opens, which can beat the queued Qt
+        # 'connected' signal that triggers this start(). stop() does the clearing.
         self._thread = threading.Thread(
             target=self._decode_loop, daemon=True, name="VideoDecoder"
         )
@@ -61,6 +62,8 @@ class VideoDecoder(QObject):
             self._thread.join(timeout=2)
             self._thread = None
         self._config_data = None
+        with self._condition:
+            self._frame_queue.clear()
         log.info("Decoder thread stopped")
 
     def feed_frame(self, frame_type: int, timestamp: int, data: bytes):
