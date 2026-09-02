@@ -34,6 +34,7 @@ BG_PAGE = "#0D0D0F"   # app window background, used for the social preview
 WHITE = "#FFFFFF"
 PURPLE = "#7C3AED"
 MUTED = "#6B7280"
+SCREEN = "#2D2D44"   # phone screen inside the mark
 INK = "#1A1A2E"       # wordmark colour on light backgrounds
 
 CANVAS = 512          # all geometry below is authored on a 512x512 grid
@@ -61,18 +62,22 @@ def circle(cx, cy, r):
     )
 
 
-def quarter_arc(cx, cy, r):
-    """Quarter arc from due east to due north, one cast wave."""
-    return f"M{n(cx + r)},{n(cy)} A{n(r)},{n(r)} 0 0 0 {n(cx)},{n(cy - r)}"
+def beam_arc(cx, cy, r, half_deg=55):
+    """Right-bulging arc fanning +-half_deg about due east, one beam wave."""
+    from math import sin, cos, radians
+    dx, dy = r * cos(radians(half_deg)), r * sin(radians(half_deg))
+    return (f"M{n(cx + dx)},{n(cy - dy)} "
+            f"A{n(r)},{n(r)} 0 0 1 {n(cx + dx)},{n(cy + dy)}")
 
 
 def mark(scale=1.0, detail=True):
     """
-    Direction A - 'Cast Phone'. Returns a list of shape dicts.
+    Direction C - 'Beam': phone broadcasting purple waves to the right.
+    A near-square composition (x118-394, y118-394 at scale 1) so it fills
+    circular launcher masks instead of sitting as a thin bar inside them.
 
-    scale=1.0 keeps the mark inside Android's adaptive-icon safe zone
-    (the centre 66% of the canvas). Larger values are for unmasked
-    contexts such as the desktop icon and favicon.
+    scale=1.0 is the reference size; the adaptive foreground uses a smaller
+    scale to respect the safe zone, unmasked contexts use a larger one.
     """
     def t(v):        # scale a position about the canvas centre
         return CANVAS / 2 + (v - CANVAS / 2) * scale
@@ -80,18 +85,15 @@ def mark(scale=1.0, detail=True):
     def L(v):        # scale a length
         return v * scale
 
-    shapes = [dict(d=rrect(t(176), t(110), L(160), L(292), L(26)), fill=WHITE)]
+    shapes = [
+        dict(d=rrect(t(118), t(118), L(148), L(276), L(26)), fill=WHITE),
+        dict(d=rrect(t(132), t(140), L(120), L(216), L(9)), fill=SCREEN),
+    ]
     if detail:
-        shapes.append(dict(d=rrect(t(238), t(119), L(36), L(6), L(3)), fill=MUTED))
-    shapes.append(dict(d=rrect(t(190), t(132), L(132), L(232), L(10)), fill=PURPLE))
-
-    cx, cy = t(214), t(340)
-    for r in (22, 46, 70):
-        shapes.append(dict(d=quarter_arc(cx, cy, L(r)), stroke=WHITE, width=L(12)))
-    shapes.append(dict(d=circle(cx, cy, L(9)), fill=WHITE))
-
-    if detail:
-        shapes.append(dict(d=rrect(t(232), t(378), L(48), L(8), L(4)), fill=MUTED))
+        shapes.append(dict(d=rrect(t(168), t(370), L(48), L(8), L(4)), fill=MUTED))
+    cx, cy = t(266), t(256)   # beams radiate from the phone's right edge
+    for r in (44, 86, 128):
+        shapes.append(dict(d=beam_arc(cx, cy, L(r)), stroke=PURPLE, width=L(20)))
     return shapes
 
 
@@ -199,7 +201,7 @@ def build():
     (res / "drawable/ic_launcher_background.xml").write_text(
         vector_drawable(bg_shape, scaled=False))
     (res / "drawable/ic_launcher_foreground.xml").write_text(
-        vector_drawable(mark(1.0)))
+        vector_drawable(mark(0.82)))
     made += ["drawable/ic_launcher_background.xml", "drawable/ic_launcher_foreground.xml"]
 
     # --- Android legacy raster fallback (API 24-25 have no adaptive icons) ---
