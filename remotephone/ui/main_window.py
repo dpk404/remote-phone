@@ -144,7 +144,8 @@ class VideoWidget(QWidget):
         px, py = self._map_to_phone(event.position())
         if px is not None:
             delta = event.angleDelta()
-            cmd = self.input.on_scroll(px, py, float(delta.x()), float(delta.y()))
+            cmd = self.input.on_scroll(px, py, float(delta.x()), float(delta.y()),
+                                       event.phase())
             if cmd:
                 self.send_command(cmd)
         super().wheelEvent(event)
