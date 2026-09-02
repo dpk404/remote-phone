@@ -32,14 +32,14 @@ Unlike scrcpy (which requires ADB/USB debugging), RemotePhone works entirely ove
 ## Architecture
 
 ```
-┌─────────────────────┐         WebSocket (WiFi)         ┌──────────────────────┐
+┌──────────────────────┐         WebSocket (WiFi)         ┌──────────────────────┐
 │    Android Phone     │ <------------------------------> │   Desktop Client     │
 │                      │                                  │                      │
 │  MediaProjection --> │  H.264 video frames ---------->  │  PyAV decoder        │
 │  MediaCodec H.264    │  Raw PCM audio --------------->  │  sounddevice player  │
 │  AudioPlaybackCapt.  │  <-- Touch/key JSON commands --  │  PyQt6 display       │
 │  AccessibilityServ.  │                                  │  Mouse/keyboard      │
-└─────────────────────┘                                  └──────────────────────┘
+└──────────────────────┘                                  └──────────────────────┘
 ```
 
 ---

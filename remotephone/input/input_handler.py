@@ -28,6 +28,8 @@ class InputHandler:
     TAP_TIME_MAX = 0.25      # max seconds for a tap
     LONG_PRESS_MIN = 0.5     # min seconds for a long press
     HSCROLL_BACK_THRESHOLD = 400.0  # cumulative horizontal scroll to trigger back (higher = less sensitive)
+    VSCROLL_STEP = 60.0      # min accumulated vertical delta per scroll command (batches trackpad events)
+    VSCROLL_GAIN = 2.5       # scroll speed: phone swipe distance per unit of wheel/trackpad travel
 
     SCROLL_COOLDOWN = 0.4    # seconds to ignore clicks after scroll (trackpad ghost taps)
 
@@ -63,7 +65,9 @@ class InputHandler:
         self._last_y = 0.0
         self._moved = False
         self._hscroll_accum = 0.0   # accumulated horizontal scroll delta
+        self._vscroll_accum = 0.0   # accumulated vertical scroll delta
         self._hscroll_time = 0.0    # last horizontal scroll timestamp
+        self._hscroll_fired = False # back already sent for the current horizontal gesture
         self._last_scroll_time = 0.0  # tracks last scroll to suppress ghost taps
         self._suppressed = False      # whether current press was suppressed
 
@@ -140,7 +144,8 @@ class InputHandler:
                 "y": round(self._press_y, 1),
             }
 
-    def on_scroll(self, x: float, y: float, dx: float, dy: float) -> dict | None:
+    def on_scroll(self, x: float, y: float, dx: float, dy: float,
+                  phase=Qt.ScrollPhase.NoScrollPhase) -> dict | None:
         """
         Convert scroll wheel into a scroll or back gesture.
         - Vertical scroll (dy) → normal page scroll
@@ -148,31 +153,57 @@ class InputHandler:
         """
         now = time.time()
 
+        # Trackpads report phases: fingers touching down starts a new gesture,
+        # even mid-momentum-tail, so a second quick swipe is never swallowed
+        # by the previous one's latch. Wheels report NoScrollPhase and rely on
+        # the time-gap reset below instead.
+        if phase == Qt.ScrollPhase.ScrollBegin:
+            self._hscroll_accum = 0.0
+            self._hscroll_fired = False
+            self._vscroll_accum = 0.0
+
         # Horizontal scroll → accumulate for back gesture detection
         if abs(dx) > abs(dy) and abs(dx) >= 1:
             # Reset accumulator if too much time passed (new gesture)
             if now - self._hscroll_time > 0.5:
                 self._hscroll_accum = 0.0
+                self._hscroll_fired = False
             self._hscroll_time = now
             self._last_scroll_time = now
+
+            # Fire back at most once per gesture: the swipe's remainder and the
+            # trackpad's momentum events keep arriving after the threshold trips.
+            if self._hscroll_fired:
+                return None
             self._hscroll_accum += dx
 
             # Two-finger swipe right → back gesture (like browser back)
             if self._hscroll_accum > self.HSCROLL_BACK_THRESHOLD:
                 self._hscroll_accum = 0.0
+                self._hscroll_fired = True
                 return {"type": "key", "action": "back"}
             return None
 
-        # Vertical scroll → normal scroll (negate dy for traditional desktop direction)
+        # Vertical scroll → normal scroll (negate dy for traditional desktop direction).
+        # Trackpads deliver a burst of tiny deltas; sent individually each becomes a
+        # sub-20px swipe that Android reads as a tap, and every dispatch cancels the
+        # previous gesture. Accumulate and emit one command per VSCROLL_STEP instead
+        # (a mouse wheel notch is 120, so it still passes through immediately).
         if abs(dy) < 1:
             return None
+        if now - self._last_scroll_time > 0.3:
+            self._vscroll_accum = 0.0
         self._last_scroll_time = now
+        self._vscroll_accum += dy
+        if abs(self._vscroll_accum) < self.VSCROLL_STEP:
+            return None
+        step, self._vscroll_accum = self._vscroll_accum, 0.0
         return {
             "type": "scroll",
             "x": round(x, 1),
             "y": round(y, 1),
             "dx": round(dx, 1),
-            "dy": round(-dy, 1),
+            "dy": round(-step * self.VSCROLL_GAIN, 1),
         }
 
     def on_key_press(self, event: QKeyEvent) -> dict | None:
