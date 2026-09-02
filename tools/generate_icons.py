@@ -218,6 +218,11 @@ def build():
         ROOT / "android/app/src/main/ic_launcher-playstore.png", 512)
     made.append("ic_launcher-playstore.png (512px)")
 
+    # --- F-Droid listing icon (fastlane) ---
+    png(icon_svg(scale=1.0, shape="square"),
+        ROOT / "fastlane/metadata/android/en-US/images/icon.png", 512)
+    made.append("fastlane images/icon.png (512px)")
+
     # --- Desktop client ---
     dest = ROOT / "remotephone/assets"
     dest.mkdir(parents=True, exist_ok=True)
