@@ -288,6 +288,24 @@ def build():
                          output_width=int(W * 2), output_height=int(H * 2))
     made.append("assets/logo.svg, logo-dark.png, logo-light.png")
 
+    # --- Self-contained badge: the lockup on its own card. PyPI strips
+    #     <picture>, so the README's <img> fallback needs one image that is
+    #     legible on light and dark pages alike. ---
+    PADX, PADY = 56, 44
+    BW, BH = W + 2 * PADX, H + 2 * PADY
+    badge = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {n(BW)} {n(BH)}" '
+        f'width="{n(BW)}" height="{n(BH)}">\n'
+        f'  <path fill="{BG_PAGE}" d="{rrect(0, 0, BW, BH, 28)}"/>\n'
+        f'  <g transform="translate({PADX},{PADY})">\n'
+        + logo(WHITE).split("\n", 1)[1].rsplit("</svg>", 1)[0]
+        + '  </g>\n</svg>\n'
+    )
+    cairosvg.svg2png(bytestring=badge.encode(),
+                     write_to=str(ROOT / "assets/logo-badge.png"),
+                     output_width=int(BW * 2), output_height=int(BH * 2))
+    made.append("assets/logo-badge.png")
+
     # --- GitHub social preview (1280x640) ---
     SW, SH = 1280, 640
     si, sgap = 168, 40

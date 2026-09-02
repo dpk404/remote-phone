@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.png">
-    <img src="assets/logo-dark.png" alt="RemotePhone" width="420">
+    <img src="https://raw.githubusercontent.com/dpk404/remote-phone/main/assets/logo-badge.png" alt="RemotePhone" width="420">
   </picture>
 </p>
 
