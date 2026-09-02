@@ -41,6 +41,9 @@ Issues = "https://github.com/dpk404/remote-phone/issues"
 [project.scripts]
 remotephone = "remotephone.main:main"
 
+[tool.setuptools.package-data]
+remotephone = ["assets/*"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["remotephone*"]

@@ -1,6 +1,14 @@
-# RemotePhone
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.png">
+    <img src="assets/logo-dark.png" alt="RemotePhone" width="420">
+  </picture>
+</p>
 
-**Mirror and control your Android phone from your desktop, no USB debugging required.**
+<p align="center">
+  <strong>Mirror and control your Android phone from your desktop, no USB debugging required.</strong>
+</p>
 
 RemotePhone is a two-part system: an Android app that captures and streams your phone's screen, and a desktop client for Linux, macOS, and Windows that displays the stream and lets you control the phone with your mouse and keyboard.
 

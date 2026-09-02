@@ -6,6 +6,7 @@ Mirror and control your Android phone from your Linux desktop.
 
 import sys
 import logging
+from pathlib import Path
 
 # Default to WARNING — only show errors and important messages
 # Use --verbose or -v flag for debug output
@@ -20,13 +21,26 @@ logging.basicConfig(
 )
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QIcon
 from remotephone.ui.main_window import MainWindow
+
+ASSETS = Path(__file__).resolve().parent / "assets"
+
+
+def app_icon() -> QIcon:
+    """Multi-resolution window/taskbar icon built from the bundled PNGs."""
+    icon = QIcon()
+    for size in (64, 128, 256, 512):
+        png = ASSETS / f"icon-{size}.png"
+        if png.exists():
+            icon.addFile(str(png))
+    return icon
 
 
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("RemotePhone")
+    app.setWindowIcon(app_icon())
     app.setStyle("Fusion")
 
     # Use a clean sans-serif font
