@@ -1,0 +1,3 @@
+New app icon, smaller APK (fewer dependencies), network scan now
+verifies devices, fixed video sometimes not starting on connect, and
+smoother trackpad scrolling and back gestures in the desktop client.

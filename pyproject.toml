@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "remote-phone"
-version = "1.1.0"
+version = "1.2.0"
 description = "Mirror and control your Android phone from your desktop over WiFi"
 readme = "README.md"
 license = "MIT"
