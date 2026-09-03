@@ -126,7 +126,8 @@ The launcher script creates a virtual environment and installs the package into 
 | Any typing | Text input into focused field |
 | Backspace | Delete character (or Back if no text field) |
 | Delete | Delete forward |
-| Ctrl+A / C / X / V | Select all / Copy / Cut / Paste |
+| Ctrl+A / C / X | Select all / Copy / Cut (copy and cut also land on the desktop clipboard) |
+| Ctrl+V | Paste the desktop clipboard into the phone |
 | Enter | Confirm / IME action / PIN submit |
 
 ### Keyboard and Text Input

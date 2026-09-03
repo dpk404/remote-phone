@@ -193,6 +193,7 @@ class ScreenCaptureService : Service() {
         // Start WebSocket server
         webSocketServer = MirrorWebSocketServer(
             port = WS_PORT,
+            context = this,
             screenWidth = screenWidth,
             screenHeight = screenHeight,
             audioAvailable = audioAvailable,

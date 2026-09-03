@@ -43,6 +43,7 @@ class WebSocketClient(QObject):
     reconnecting = pyqtSignal(int)   # attempt number
     frame_received = pyqtSignal(int, int, bytes)  # frame_type, timestamp, payload (audio only)
     info_received = pyqtSignal(dict)
+    clipboard_received = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
 
     def __init__(self, parent=None):
@@ -167,6 +168,8 @@ class WebSocketClient(QObject):
 
             if msg_type == "info":
                 self.info_received.emit(obj)
+            elif msg_type == "clipboard":
+                self.clipboard_received.emit(obj.get("content", ""))
             elif msg_type == "error":
                 self.error_occurred.emit(obj.get("message", "Unknown error"))
         except json.JSONDecodeError:

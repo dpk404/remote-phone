@@ -1,6 +1,10 @@
 package com.remotephone
 
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import org.java_websocket.WebSocket
 import org.java_websocket.handshake.ClientHandshake
@@ -11,11 +15,14 @@ import java.nio.ByteBuffer
 
 class MirrorWebSocketServer(
     port: Int,
+    private val context: Context,
     private val screenWidth: Int,
     private val screenHeight: Int,
     private val audioAvailable: Boolean,
     private val onControlCommand: (String) -> Unit
 ) : WebSocketServer(InetSocketAddress(port)) {
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     companion object {
         private const val TAG = "MirrorWSServer"
@@ -62,6 +69,13 @@ class MirrorWebSocketServer(
                     val enabled = json.getBoolean("enabled")
                     ScreenCaptureService.toggleAudio(enabled)
                 }
+                "copy", "cut" -> {
+                    onControlCommand(message)
+                    // Mirror the phone clipboard back once the action has landed.
+                    // Reading works while the RemotePhone Keyboard is the selected
+                    // IME (the Android 10+ background-clipboard exemption).
+                    mainHandler.postDelayed({ sendClipboard(conn) }, 250)
+                }
                 else -> {
                     // Forward all other messages as control commands
                     onControlCommand(message)
@@ -74,6 +88,19 @@ class MirrorWebSocketServer(
 
     override fun onMessage(conn: WebSocket, message: ByteBuffer) {
         // Not expected from client side
+    }
+
+    private fun sendClipboard(conn: WebSocket) {
+        try {
+            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val text = cm.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()
+            if (!text.isNullOrEmpty() && conn.isOpen) {
+                conn.send(JSONObject().put("type", "clipboard").put("content", text).toString())
+                Log.i(TAG, "Sent clipboard to client (${text.length} chars)")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Clipboard read failed (RemotePhone Keyboard not selected?)", e)
+        }
     }
 
     override fun onError(conn: WebSocket?, ex: Exception) {
