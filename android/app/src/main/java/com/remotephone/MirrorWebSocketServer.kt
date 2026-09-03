@@ -91,15 +91,21 @@ class MirrorWebSocketServer(
     }
 
     private fun sendClipboard(conn: WebSocket) {
-        try {
+        // Only the active IME may read the clipboard; when that fails, use the
+        // selection the accessibility service captured while performing the copy.
+        val text = try {
             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val text = cm.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()
+            cm.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()
+        } catch (e: Exception) {
+            null
+        } ?: RemoteAccessibilityService.lastCopiedText
+        try {
             if (!text.isNullOrEmpty() && conn.isOpen) {
                 conn.send(JSONObject().put("type", "clipboard").put("content", text).toString())
                 Log.i(TAG, "Sent clipboard to client (${text.length} chars)")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Clipboard read failed (RemotePhone Keyboard not selected?)", e)
+            Log.w(TAG, "Clipboard send failed", e)
         }
     }
 

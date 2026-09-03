@@ -9,8 +9,10 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.util.Log
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.annotation.RequiresApi
 import org.json.JSONObject
 
 class RemoteAccessibilityService : AccessibilityService() {
@@ -18,6 +20,11 @@ class RemoteAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "RemoteAccessibility"
         private var instance: RemoteAccessibilityService? = null
+
+        /** Selection captured at copy/cut time, for clients when the clipboard is unreadable. */
+        @Volatile
+        var lastCopiedText: String? = null
+            private set
 
         fun isRunning(): Boolean = instance != null
 
@@ -55,32 +62,41 @@ class RemoteAccessibilityService : AccessibilityService() {
                         cmd.getDouble("dy").toFloat()
                     )
                     "key" -> service.performKey(cmd.getString("action"))
-                    // Text editing goes through the RemotePhone keyboard (real input
-                    // pipeline, reliable in web fields) when it is the active IME;
-                    // otherwise through the accessibility node actions below.
+                    // Text editing prefers the real input pipeline: on Android 13+ the
+                    // service holds its own InputConnection (flagInputMethodEditor), so
+                    // the user's keyboard stays selected. Next preference is the
+                    // RemotePhone Keyboard when it is the active IME (pre-13), and the
+                    // accessibility node actions below are the last resort.
                     "text" -> {
                         val content = cmd.getString("content")
-                        if (!RemoteInputMethodService.typeText(content)) service.performTextInput(content)
+                        if (!service.imeCommit(content) &&
+                            !RemoteInputMethodService.typeText(content)) service.performTextInput(content)
                     }
                     "backspace" -> {
-                        if (!RemoteInputMethodService.backspace()) service.performBackspace()
+                        if (!service.imeKey(KeyEvent.KEYCODE_DEL) &&
+                            !RemoteInputMethodService.backspace()) service.performBackspace()
                     }
                     "delete" -> {
-                        if (!RemoteInputMethodService.forwardDelete()) service.performDelete()
+                        if (!service.imeKey(KeyEvent.KEYCODE_FORWARD_DEL) &&
+                            !RemoteInputMethodService.forwardDelete()) service.performDelete()
                     }
                     "select_all" -> {
-                        if (!RemoteInputMethodService.contextMenu(android.R.id.selectAll)) service.performSelectAll()
+                        if (!service.imeContextMenu(android.R.id.selectAll) &&
+                            !RemoteInputMethodService.contextMenu(android.R.id.selectAll)) service.performSelectAll()
                     }
                     "copy" -> {
-                        if (!RemoteInputMethodService.contextMenu(android.R.id.copy))
+                        if (!service.imeCopy(cut = false) &&
+                            !RemoteInputMethodService.contextMenu(android.R.id.copy))
                             service.performClipboardAction(AccessibilityNodeInfo.ACTION_COPY)
                     }
                     "cut" -> {
-                        if (!RemoteInputMethodService.contextMenu(android.R.id.cut))
+                        if (!service.imeCopy(cut = true) &&
+                            !RemoteInputMethodService.contextMenu(android.R.id.cut))
                             service.performClipboardAction(AccessibilityNodeInfo.ACTION_CUT)
                     }
                     "paste" -> {
-                        if (!RemoteInputMethodService.contextMenu(android.R.id.paste))
+                        if (!service.imeContextMenu(android.R.id.paste) &&
+                            !RemoteInputMethodService.contextMenu(android.R.id.paste))
                             service.performClipboardAction(AccessibilityNodeInfo.ACTION_PASTE)
                     }
                 }
@@ -108,6 +124,59 @@ class RemoteAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         // Required override
+    }
+
+    // ---- Input via the service's own InputConnection (Android 13+) ----
+    // Null when the OS is older or no editor is focused; callers then fall back.
+
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    private fun imeIc() = inputMethod?.currentInputConnection
+
+    private fun imeCommit(content: String): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
+        val ic = imeIc() ?: return false
+        if (content == "\n") {
+            // Enter as a key event: pages and search boxes listen for the key itself
+            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+        } else {
+            ic.commitText(content, 1, null)
+        }
+        return true
+    }
+
+    private fun imeKey(code: Int): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
+        val ic = imeIc() ?: return false
+        ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+        ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+        return true
+    }
+
+    private fun imeContextMenu(id: Int): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
+        val ic = imeIc() ?: return false
+        ic.performContextMenuAction(id)
+        return true
+    }
+
+    /** Copy/cut, capturing the selection so the server can mirror it to clients
+     *  even though only the active IME may read the clipboard. */
+    private fun imeCopy(cut: Boolean): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
+        val ic = imeIc() ?: return false
+        try {
+            val st = ic.getSurroundingText(5000, 5000, 0)
+            if (st != null) {
+                val a = minOf(st.selectionStart, st.selectionEnd).coerceIn(0, st.text.length)
+                val b = maxOf(st.selectionStart, st.selectionEnd).coerceIn(0, st.text.length)
+                if (a != b) lastCopiedText = st.text.substring(a, b).toString()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Selection read failed", e)
+        }
+        ic.performContextMenuAction(if (cut) android.R.id.cut else android.R.id.copy)
+        return true
     }
 
     // ---- Screen wake ----

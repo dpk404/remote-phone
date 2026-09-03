@@ -132,7 +132,7 @@ The launcher script creates a virtual environment and installs the package into 
 
 ### Keyboard and Text Input
 
-When you tap a text field on the phone, you can type directly from your desktop keyboard. For reliable typing in every app, including text fields inside web pages, enable the **RemotePhone Keyboard** (the app's Remote Typing Setup card opens the settings) and select it while mirroring; typing then goes through Android's real input pipeline. Without it, typing falls back to accessibility text actions, which work in native text fields but are unreliable in browsers.
+When you tap a text field on the phone, you can type directly from your desktop keyboard. On Android 13+ this goes through the real input pipeline automatically, works in every app including text fields inside web pages, and your normal on-screen keyboard stays selected. On Android 12 and older, enable and select the **RemotePhone Keyboard** (the app's Remote Typing Setup card opens the settings) for the same reliability; without it, typing falls back to accessibility text actions, which work in native text fields but are unreliable in browsers.
 
 **PIN/Password fields** are handled specially — keyboard digits click the on-screen PIN pad buttons via the accessibility tree, and Enter searches for the confirm/OK button.
 
