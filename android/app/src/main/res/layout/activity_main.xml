@@ -232,6 +232,53 @@
                 android:paddingEnd="0dp" />
         </LinearLayout>
 
+        <!-- Keyboard Setup Card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_background"
+            android:padding="16dp"
+            android:layout_marginTop="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="REMOTE TYPING SETUP"
+                android:textSize="11sp"
+                android:textColor="@color/text_hint"
+                android:letterSpacing="0.15" />
+
+            <TextView
+                android:id="@+id/keyboardStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="RemotePhone Keyboard: not enabled"
+                android:textSize="13sp"
+                android:textColor="@color/status_amber"
+                android:layout_marginTop="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Select the RemotePhone Keyboard while mirroring so desktop typing works in every app, including browser pages."
+                android:textSize="12sp"
+                android:textColor="@color/text_muted"
+                android:layout_marginTop="4dp" />
+
+            <Button
+                android:id="@+id/keyboardButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:text="Enable RemotePhone Keyboard"
+                android:textSize="12sp"
+                android:textColor="@color/accent_blue"
+                android:background="@android:color/transparent"
+                android:layout_marginTop="8dp"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp" />
+        </LinearLayout>
+
         <View
             android:layout_width="1dp"
             android:layout_height="48dp" />
