@@ -55,13 +55,34 @@ class RemoteAccessibilityService : AccessibilityService() {
                         cmd.getDouble("dy").toFloat()
                     )
                     "key" -> service.performKey(cmd.getString("action"))
-                    "text" -> service.performTextInput(cmd.getString("content"))
-                    "backspace" -> service.performBackspace()
-                    "delete" -> service.performDelete()
-                    "select_all" -> service.performSelectAll()
-                    "copy" -> service.performClipboardAction(AccessibilityNodeInfo.ACTION_COPY)
-                    "cut" -> service.performClipboardAction(AccessibilityNodeInfo.ACTION_CUT)
-                    "paste" -> service.performClipboardAction(AccessibilityNodeInfo.ACTION_PASTE)
+                    // Text editing goes through the RemotePhone keyboard (real input
+                    // pipeline, reliable in web fields) when it is the active IME;
+                    // otherwise through the accessibility node actions below.
+                    "text" -> {
+                        val content = cmd.getString("content")
+                        if (!RemoteInputMethodService.typeText(content)) service.performTextInput(content)
+                    }
+                    "backspace" -> {
+                        if (!RemoteInputMethodService.backspace()) service.performBackspace()
+                    }
+                    "delete" -> {
+                        if (!RemoteInputMethodService.forwardDelete()) service.performDelete()
+                    }
+                    "select_all" -> {
+                        if (!RemoteInputMethodService.contextMenu(android.R.id.selectAll)) service.performSelectAll()
+                    }
+                    "copy" -> {
+                        if (!RemoteInputMethodService.contextMenu(android.R.id.copy))
+                            service.performClipboardAction(AccessibilityNodeInfo.ACTION_COPY)
+                    }
+                    "cut" -> {
+                        if (!RemoteInputMethodService.contextMenu(android.R.id.cut))
+                            service.performClipboardAction(AccessibilityNodeInfo.ACTION_CUT)
+                    }
+                    "paste" -> {
+                        if (!RemoteInputMethodService.contextMenu(android.R.id.paste))
+                            service.performClipboardAction(AccessibilityNodeInfo.ACTION_PASTE)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error handling command: $json", e)

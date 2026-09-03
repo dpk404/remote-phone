@@ -6,6 +6,7 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.Switch
 import android.widget.TextView
@@ -25,6 +26,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var audioSubtext: TextView
     private lateinit var accessibilityStatus: TextView
     private lateinit var accessibilityButton: Button
+    private lateinit var keyboardStatus: TextView
+    private lateinit var keyboardButton: Button
 
     private var isStreaming = false
 
@@ -53,6 +56,8 @@ class MainActivity : ComponentActivity() {
         audioSubtext = findViewById(R.id.audioSubtext)
         accessibilityStatus = findViewById(R.id.accessibilityStatus)
         accessibilityButton = findViewById(R.id.accessibilityButton)
+        keyboardStatus = findViewById(R.id.keyboardStatus)
+        keyboardButton = findViewById(R.id.keyboardButton)
 
         // Show device IP
         ipText.text = getDeviceIpAddress()
@@ -86,6 +91,15 @@ class MainActivity : ComponentActivity() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
+        // Keyboard button: enable in settings first, then just switch keyboards
+        keyboardButton.setOnClickListener {
+            if (isRemoteKeyboardEnabled()) {
+                (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
+            } else {
+                startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+            }
+        }
+
         // Request notification permission on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 100)
@@ -95,6 +109,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         updateAccessibilityStatus()
+        updateKeyboardStatus()
         ipText.text = getDeviceIpAddress()
     }
 
@@ -147,6 +162,32 @@ class MainActivity : ComponentActivity() {
                 accessibilityStatus.text = "Accessibility Service: Not enabled"
             }
             accessibilityStatus.setTextColor(getColor(R.color.status_amber))
+        }
+    }
+
+    private fun isRemoteKeyboardEnabled(): Boolean =
+        Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_INPUT_METHODS)
+            ?.contains(packageName) == true
+
+    private fun updateKeyboardStatus() {
+        val selected = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+            ?.startsWith(packageName) == true
+        when {
+            selected -> {
+                keyboardStatus.text = "RemotePhone Keyboard: \u2713 Active"
+                keyboardStatus.setTextColor(getColor(R.color.status_green))
+                keyboardButton.text = "Switch keyboard"
+            }
+            isRemoteKeyboardEnabled() -> {
+                keyboardStatus.text = "RemotePhone Keyboard: enabled, not selected"
+                keyboardStatus.setTextColor(getColor(R.color.status_amber))
+                keyboardButton.text = "Switch keyboard"
+            }
+            else -> {
+                keyboardStatus.text = "RemotePhone Keyboard: not enabled"
+                keyboardStatus.setTextColor(getColor(R.color.status_amber))
+                keyboardButton.text = "Enable RemotePhone Keyboard"
+            }
         }
     }
 
