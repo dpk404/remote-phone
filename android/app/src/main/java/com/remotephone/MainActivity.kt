@@ -165,9 +165,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun isRemoteKeyboardEnabled(): Boolean =
-        Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_INPUT_METHODS)
-            ?.contains(packageName) == true
+    private fun isRemoteKeyboardEnabled(): Boolean {
+        // Settings.Secure.ENABLED_INPUT_METHODS is not readable from targetSdk 34;
+        // InputMethodManager is the supported way to list enabled keyboards.
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        return imm.enabledInputMethodList.any { it.packageName == packageName }
+    }
 
     private fun updateKeyboardStatus() {
         val selected = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
