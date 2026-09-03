@@ -232,8 +232,9 @@
                 android:paddingEnd="0dp" />
         </LinearLayout>
 
-        <!-- Keyboard Setup Card -->
+        <!-- Keyboard Setup Card (Android 12 and older only) -->
         <LinearLayout
+            android:id="@+id/keyboardCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"

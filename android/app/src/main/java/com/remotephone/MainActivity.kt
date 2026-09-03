@@ -91,6 +91,12 @@ class MainActivity : ComponentActivity() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
+        // Android 13+ types through the accessibility service's own input
+        // connection, so the extra keyboard is only needed on older versions
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            findViewById<android.view.View>(R.id.keyboardCard).visibility = android.view.View.GONE
+        }
+
         // Keyboard button: enable in settings first, then just switch keyboards
         keyboardButton.setOnClickListener {
             if (isRemoteKeyboardEnabled()) {
@@ -109,7 +115,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         updateAccessibilityStatus()
-        updateKeyboardStatus()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) updateKeyboardStatus()
         ipText.text = getDeviceIpAddress()
     }
 
