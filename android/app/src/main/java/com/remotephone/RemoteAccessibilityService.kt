@@ -12,7 +12,6 @@ import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import androidx.annotation.RequiresApi
 import org.json.JSONObject
 
 class RemoteAccessibilityService : AccessibilityService() {
@@ -127,46 +126,38 @@ class RemoteAccessibilityService : AccessibilityService() {
     }
 
     // ---- Input via the service's own InputConnection (Android 13+) ----
-    // Null when the OS is older or no editor is focused; callers then fall back.
+    // Each returns false when the OS is older or no editor is focused; callers
+    // then fall back to the RemotePhone Keyboard or accessibility node actions.
 
-    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-    private fun imeIc() = inputMethod?.currentInputConnection
+    // The service's own connection to the focused editor, or null below API 33
+    // / when nothing is focused. The `?.apply { } != null` callers below run the
+    // block only when it exists and report whether they did, so the guard lives
+    // here once instead of in every command.
+    private fun imeIc() =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) inputMethod?.currentInputConnection else null
 
-    private fun imeCommit(content: String): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
-        val ic = imeIc() ?: return false
+    private fun imeCommit(content: String) = imeIc()?.apply {
         if (content == "\n") {
             // Enter as a key event: pages and search boxes listen for the key itself
-            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
-            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+            sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+            sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
         } else {
-            ic.commitText(content, 1, null)
+            commitText(content, 1, null)
         }
-        return true
-    }
+    } != null
 
-    private fun imeKey(code: Int): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
-        val ic = imeIc() ?: return false
-        ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
-        ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
-        return true
-    }
+    private fun imeKey(code: Int) = imeIc()?.apply {
+        sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+        sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+    } != null
 
-    private fun imeContextMenu(id: Int): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
-        val ic = imeIc() ?: return false
-        ic.performContextMenuAction(id)
-        return true
-    }
+    private fun imeContextMenu(id: Int) = imeIc()?.apply { performContextMenuAction(id) } != null
 
     /** Copy/cut, capturing the selection so the server can mirror it to clients
      *  even though only the active IME may read the clipboard. */
-    private fun imeCopy(cut: Boolean): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
-        val ic = imeIc() ?: return false
+    private fun imeCopy(cut: Boolean) = imeIc()?.apply {
         try {
-            val st = ic.getSurroundingText(5000, 5000, 0)
+            val st = getSurroundingText(5000, 5000, 0)
             if (st != null) {
                 val a = minOf(st.selectionStart, st.selectionEnd).coerceIn(0, st.text.length)
                 val b = maxOf(st.selectionStart, st.selectionEnd).coerceIn(0, st.text.length)
@@ -175,9 +166,8 @@ class RemoteAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.w(TAG, "Selection read failed", e)
         }
-        ic.performContextMenuAction(if (cut) android.R.id.cut else android.R.id.copy)
-        return true
-    }
+        performContextMenuAction(if (cut) android.R.id.cut else android.R.id.copy)
+    } != null
 
     // ---- Screen wake ----
 

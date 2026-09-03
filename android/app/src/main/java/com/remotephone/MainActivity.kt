@@ -56,8 +56,6 @@ class MainActivity : ComponentActivity() {
         audioSubtext = findViewById(R.id.audioSubtext)
         accessibilityStatus = findViewById(R.id.accessibilityStatus)
         accessibilityButton = findViewById(R.id.accessibilityButton)
-        keyboardStatus = findViewById(R.id.keyboardStatus)
-        keyboardButton = findViewById(R.id.keyboardButton)
 
         // Show device IP
         ipText.text = getDeviceIpAddress()
@@ -92,17 +90,18 @@ class MainActivity : ComponentActivity() {
         }
 
         // Android 13+ types through the accessibility service's own input
-        // connection, so the extra keyboard is only needed on older versions
+        // connection, so the extra keyboard (and its card) is only wired on older versions
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             findViewById<android.view.View>(R.id.keyboardCard).visibility = android.view.View.GONE
-        }
-
-        // Keyboard button: enable in settings first, then just switch keyboards
-        keyboardButton.setOnClickListener {
-            if (isRemoteKeyboardEnabled()) {
-                (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
-            } else {
-                startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+        } else {
+            keyboardStatus = findViewById(R.id.keyboardStatus)
+            keyboardButton = findViewById(R.id.keyboardButton)
+            keyboardButton.setOnClickListener {
+                if (isRemoteKeyboardEnabled()) {
+                    (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
+                } else {
+                    startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+                }
             }
         }
 
