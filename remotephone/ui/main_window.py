@@ -6,7 +6,7 @@ Displays the mirrored phone screen and captures input for remote control.
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QStatusBar,
-    QSizePolicy, QCheckBox
+    QSizePolicy, QCheckBox, QMessageBox
 )
 from PyQt6.QtCore import Qt, QRectF, QTimer
 from PyQt6.QtGui import QImage, QPainter, QColor, QFont, QKeyEvent
@@ -18,6 +18,30 @@ from remotephone.decoder.audio_player import AudioPlayer
 from remotephone.input.input_handler import InputHandler
 
 _BACK = {"type": "key", "action": "back"}
+
+# (key, action) rows for the help dialog and the ? button tooltip. Mirrors the
+# gesture and key handling in input_handler.py.
+SHORTCUTS = [
+    ("Left click", "Tap"),
+    ("Click + drag", "Swipe"),
+    ("Hold click (>0.5s)", "Long press"),
+    ("Scroll wheel / two fingers", "Scroll"),
+    ("Two-finger swipe right", "Back"),
+    ("Right / middle click", "Back"),
+    ("Esc", "Back"),
+    ("Home", "Home"),
+    ("F2", "Recent apps"),
+    ("F5", "Notifications"),
+    ("F6", "Quick Settings"),
+    ("F10", "Lock screen"),
+    ("F11", "Fullscreen toggle"),
+    ("Type", "Text into the focused field"),
+    ("Backspace", "Delete (or Back if no field)"),
+    ("Delete", "Delete forward"),
+    ("Enter", "Confirm / submit"),
+    ("Ctrl+A / C / X / V", "Select all / Copy / Cut / Paste"),
+]
+SHORTCUTS_TOOLTIP = "\n".join(f"{k}\u2003{a}" for k, a in SHORTCUTS)
 
 
 class VideoWidget(QWidget):
@@ -245,16 +269,23 @@ class MainWindow(QMainWindow):
         self.fps_label = QLabel("")
         self.resolution_label = QLabel("")
 
+        self.shortcuts_btn = QPushButton("\u2328 Shortcuts")  # keyboard glyph
+        self.shortcuts_btn.setObjectName("shortcutsBtn")
+        self.shortcuts_btn.setToolTip(SHORTCUTS_TOOLTIP)  # hover for the list, click for the dialog
+        self.shortcuts_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
         self.status_bar.addWidget(self.status_label, 1)
         self.status_bar.addPermanentWidget(self.resolution_label)
         self.status_bar.addPermanentWidget(self.device_label)
         self.status_bar.addPermanentWidget(self.fps_label)
+        self.status_bar.addPermanentWidget(self.shortcuts_btn)
 
     def _setup_connections(self):
         # Connection
         self.connect_btn.clicked.connect(self._on_connect_clicked)
         self.ip_input.returnPressed.connect(self._on_connect_clicked)
         self.scan_btn.clicked.connect(self._on_scan_clicked)
+        self.shortcuts_btn.clicked.connect(self._show_shortcuts)
 
         # Scanner signals
         self.scanner.scan_started.connect(self._on_scan_started)
@@ -318,6 +349,16 @@ class MainWindow(QMainWindow):
             }
             #scanBtn:disabled {
                 color: #6B7280;
+            }
+            #shortcutsBtn {
+                background: transparent;
+                border: none;
+                color: #9CA3AF;
+                font-size: 12px;
+                padding: 0 6px;
+            }
+            #shortcutsBtn:hover {
+                color: #FFFFFF;
             }
             #connectBtn {
                 background-color: #7C3AED;
@@ -516,6 +557,17 @@ class MainWindow(QMainWindow):
     def _send_command(self, cmd: dict):
         if self.connected:
             self.ws_client.send_command(cmd)
+
+    def _show_shortcuts(self):
+        rows = "".join(
+            f"<tr><td style='padding-right:16px'><b>{k}</b></td><td>{a}</td></tr>"
+            for k, a in SHORTCUTS
+        )
+        box = QMessageBox(self)
+        box.setWindowTitle("Keyboard & mouse shortcuts")
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(f"<table cellspacing='4'>{rows}</table>")
+        box.exec()
 
     # ── Audio toggle ──
 
