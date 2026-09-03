@@ -4,7 +4,7 @@ Displays the mirrored phone screen and captures input for remote control.
 """
 
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QStatusBar,
     QSizePolicy, QCheckBox
 )
@@ -266,6 +266,7 @@ class MainWindow(QMainWindow):
         self.ws_client.reconnecting.connect(self._on_reconnecting)
         self.ws_client.frame_received.connect(self._on_frame_received)
         self.ws_client.info_received.connect(self._on_info_received)
+        self.ws_client.clipboard_received.connect(self._on_clipboard_received)
         self.ws_client.error_occurred.connect(self._on_error)
 
         # Give decoder a direct reference so WS thread can feed frames
@@ -428,6 +429,10 @@ class MainWindow(QMainWindow):
         if info.get("audioAvailable", False):
             self.audio_checkbox.setEnabled(True)
 
+    def _on_clipboard_received(self, content: str):
+        QApplication.clipboard().setText(content)
+        self.status_label.setText(f"Copied to clipboard ({len(content)} chars)")
+
     def _on_error(self, error: str):
         self.status_label.setText(f"⚠ {error}")
         if not self.connected:
@@ -492,6 +497,12 @@ class MainWindow(QMainWindow):
         # Holding a key repeats text/backspace/delete/enter, but never system keys (back, home, ...)
         if event.isAutoRepeat() and not (cmd and cmd["type"] in ("text", "backspace", "delete")):
             return
+        # Ctrl+V types the desktop clipboard into the phone; the phone's own
+        # clipboard paste stays as fallback when the desktop clipboard is empty
+        if cmd and cmd["type"] == "paste":
+            text = QApplication.clipboard().text()
+            if text:
+                cmd = {"type": "text", "content": text}
         if cmd:
             self._send_command(cmd)
         elif event.key() == Qt.Key.Key_F11:
