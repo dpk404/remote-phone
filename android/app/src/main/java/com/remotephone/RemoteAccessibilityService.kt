@@ -68,11 +68,16 @@ class RemoteAccessibilityService : AccessibilityService() {
                     // accessibility node actions below are the last resort.
                     "text" -> {
                         val content = cmd.getString("content")
-                        if (!service.imeCommit(content) &&
+                        // PIN/password fields (incl. the lock screen) are button grids,
+                        // not text editors: only clicking the on-screen pad works, so
+                        // skip the input-connection paths for them.
+                        if (service.isPasswordFieldFocused()) service.performTextInput(content)
+                        else if (!service.imeCommit(content) &&
                             !RemoteInputMethodService.typeText(content)) service.performTextInput(content)
                     }
                     "backspace" -> {
-                        if (!service.imeKey(KeyEvent.KEYCODE_DEL) &&
+                        if (service.isPasswordFieldFocused()) service.performBackspace()
+                        else if (!service.imeKey(KeyEvent.KEYCODE_DEL) &&
                             !RemoteInputMethodService.backspace()) service.performBackspace()
                     }
                     "delete" -> {
