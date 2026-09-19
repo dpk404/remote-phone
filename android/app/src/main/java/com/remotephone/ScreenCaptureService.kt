@@ -161,6 +161,8 @@ class ScreenCaptureService : Service() {
             audioAvailable = audioAvailable,
             onControlCommand = { RemoteAccessibilityService.handleCommand(it) }
         )
+        // A quick stop and start must not fail on the previous socket still closing
+        webSocketServer!!.isReuseAddr = true
         webSocketServer!!.start()
 
         isRunning = true
