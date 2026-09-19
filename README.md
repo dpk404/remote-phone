@@ -27,12 +27,16 @@ Unlike scrcpy (which requires ADB/USB debugging), RemotePhone works entirely ove
 - **Auto-discovery** — scans local network and auto-connects to the phone
 - **Auto-reconnect** — reconnects automatically on connection loss with exponential backoff
 - **Wake on input** — wakes the phone screen when you interact from the desktop
+- **Approval on the phone** before a computer can see or control the screen, with optional remembering
+- **Encrypted connection** with a certificate the phone keeps in its keystore
+- **Landscape support** that turns the desktop window with the phone
+- **Instant picture** on connect, even when the phone screen is static
 - **Dark theme** — sleek UI on both phone and desktop
 
 ## Architecture
 
 ```
-┌──────────────────────┐         WebSocket (WiFi)         ┌──────────────────────┐
+┌──────────────────────┐    WebSocket over TLS (WiFi)     ┌──────────────────────┐
 │    Android Phone     │ <------------------------------> │   Desktop Client     │
 │                      │                                  │                      │
 │  MediaProjection --> │  H.264 video frames ---------->  │  PyAV decoder        │
@@ -103,7 +107,18 @@ The launcher script creates a virtual environment and installs the package into 
 
 1. **On your phone:** Open RemotePhone -> tap **"Start Mirroring"** -> grant the screen capture permission
 2. **On your computer:** Run the desktop client. It auto-scans the network and connects if one phone is found
-3. If auto-connect doesn't work, enter the phone's IP (shown in the app) and click **Connect**
+3. **Back on the phone:** a connection request appears as a notification and as a card on the app's main screen. Tap **Allow**. The picture shows up at once
+4. If auto-connect doesn't work, enter the phone's IP (shown in the app) and click **Connect**
+
+### Who may connect
+
+Every decision is made on the phone; the desktop never asks anything.
+
+- A computer connecting for the first time gets neither video nor control until you tap **Allow**. Deny, or no answer within a minute, closes the connection and the desktop shows why.
+- Allow lasts for the current mirroring session, so reconnects are silent. Stopping and starting mirroring asks again.
+- The app's **Settings** screen has three switches: **Ask before a computer connects** (on), **Remember allowed computers** (off), and **Allow several computers at once** (off). With remembering on, an allowed computer connects without asking in later sessions until you tap **Forget remembered computers**. With several off, a second computer is rejected while one is watching.
+- The phone's notification and status line show which computers are watching.
+- If notifications are blocked for RemotePhone, the request still appears on the app's main screen.
 
 ### Controls
 
@@ -146,11 +161,18 @@ Requires Android 10+ and `libportaudio2` on Linux.
 
 ## Protocol
 
-Communication uses WebSocket on port **8765**.
+Communication uses WebSocket over TLS on port **8765**. The phone serves a self-signed certificate it generated once in its keystore. Desktop clients from 2.0 need the 2.0 phone app and vice versa.
 
 - **Video:** H.264 NAL units with a 9-byte binary header (frame type, timestamp, size)
 - **Audio:** Raw PCM (16-bit LE, 44100 Hz, stereo) with the same binary header
 - **Control:** JSON text messages for tap, swipe, scroll, key actions, text input
+
+### Handshake
+
+1. The client sends `hello` with a random id it made for this phone. The phone replies with `info` (device, screen size).
+2. Unknown id: the phone sends `approval: pending` and asks its owner. Allow sends `approval: granted` with a random secret, then the current group of pictures and the live stream. Deny closes the connection with code 1008.
+3. Known id: the phone sends a `challenge` nonce. The client answers `auth` with an HMAC-SHA256 over the nonce and the SHA-256 fingerprint of the certificate it connected to. A wrong answer closes with 1008. Binding the answer to the certificate means a relay on the network cannot stand in for the phone.
+4. Nothing but `hello` and `auth` is accepted from a client that has not been granted. The network scanner sends `hello` with `probe: true`, which only returns `info` and never prompts.
 
 ### Encoding Settings
 
@@ -173,6 +195,7 @@ Communication uses WebSocket on port **8765**.
 - Both devices must be on the **same WiFi network**.
 - Some device manufacturers may restrict the AccessibilityService or MediaProjection behavior.
 - Text input uses `ACTION_SET_TEXT` which may not work in all apps (games, custom views).
+- Remembered computers depend on the phone's certificate and the desktop's stored secret. Clearing the app's data on either side, or reinstalling, asks for approval again.
 
 ---
 
@@ -182,10 +205,13 @@ Communication uses WebSocket on port **8765**.
 remote_phone/
 ├── android/                    # Android app (Kotlin)
 │   ├── app/src/main/java/com/remotephone/
-│   │   ├── MainActivity.kt              # UI + permission flow
-│   │   ├── ScreenCaptureService.kt       # MediaProjection + H.264 encoding
+│   │   ├── MainActivity.kt              # UI, permission flow, connection requests
+│   │   ├── SettingsActivity.kt          # Who may connect
+│   │   ├── Prefs.kt                     # Settings and remembered computers
+│   │   ├── ScreenCaptureService.kt       # MediaProjection + H.264 encoding, approval prompts
 │   │   ├── RemoteAccessibilityService.kt # Gesture dispatch + text input
-│   │   └── MirrorWebSocketServer.kt      # WebSocket server + backpressure
+│   │   ├── MirrorWebSocketServer.kt      # WebSocket server, consent gate, picture replay
+│   │   └── Tls.kt                        # Keystore certificate for the TLS server
 │   └── app/src/main/res/                 # Layouts, drawables, configs
 │
 ├── remotephone/                # Python desktop client (pip install remote-phone)
