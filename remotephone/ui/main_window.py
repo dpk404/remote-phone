@@ -55,9 +55,7 @@ class VideoWidget(QWidget):
         self.input = input_handler
         self.send_command = send_command
         self.image = None
-        self.phone_width = 1080
-        self.phone_height = 2400
-        self.setMinimumSize(360, 640)
+        self.setMinimumSize(360, 360)  # square floor so a landscape window can be short
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -66,10 +64,6 @@ class VideoWidget(QWidget):
         # Skip automatic background erase — we paint the full widget ourselves
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-
-    def set_phone_dimensions(self, width: int, height: int):
-        self.phone_width = width
-        self.phone_height = height
 
     def update_frame(self, image: QImage):
         self.image = image
@@ -128,8 +122,9 @@ class VideoWidget(QWidget):
         if px < 0 or px >= dw or py < 0 or py >= dh:
             return None, None
 
-        phone_x = (px / dw) * self.phone_width
-        phone_y = (py / dh) * self.phone_height
+        # The frame is the phone's screen size, so this follows rotation with no protocol hop
+        phone_x = (px / dw) * self.image.width()
+        phone_y = (py / dh) * self.image.height()
         return phone_x, phone_y
 
     def mousePressEvent(self, event):
@@ -193,6 +188,7 @@ class MainWindow(QMainWindow):
         # State
         self.connected = False
         self.frame_count = 0  # decoded frames since the last FPS tick
+        self._landscape = False  # shape the window was last fitted to; starts portrait
 
         self._setup_ui()
         self._setup_connections()
@@ -464,7 +460,6 @@ class MainWindow(QMainWindow):
 
         self.device_label.setText(f"{device}")
         self.resolution_label.setText(f"{sw}×{sh}")
-        self.video_widget.set_phone_dimensions(sw, sh)
         self.setWindowTitle(f"RemotePhone — {device} (Android {android_ver})")
 
         if info.get("audioAvailable", False):
@@ -525,6 +520,19 @@ class MainWindow(QMainWindow):
     def _on_decoded_frame(self, image: QImage):
         self.video_widget.update_frame(image)
         self.frame_count += 1
+        landscape = image.width() > image.height()
+        if landscape != self._landscape:
+            self._landscape = landscape
+            self._fit_window(image.width(), image.height())
+
+    def _fit_window(self, w: int, h: int):
+        """Turn the window to match a rotated phone, keeping the video's long side."""
+        if self.isFullScreen() or self.isMaximized():
+            return
+        vw = self.video_widget
+        long_side = max(vw.width(), vw.height())
+        new_w, new_h = (long_side, long_side * h // w) if w > h else (long_side * w // h, long_side)
+        self.resize(self.width() - vw.width() + new_w, self.height() - vw.height() + new_h)
 
     def _update_fps(self):
         if self.connected:

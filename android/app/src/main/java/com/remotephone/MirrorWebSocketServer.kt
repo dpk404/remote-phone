@@ -16,8 +16,8 @@ import java.nio.ByteBuffer
 class MirrorWebSocketServer(
     port: Int,
     private val context: Context,
-    private val screenWidth: Int,
-    private val screenHeight: Int,
+    private var screenWidth: Int,
+    private var screenHeight: Int,
     private val audioAvailable: Boolean,
     private val onControlCommand: (String) -> Unit
 ) : WebSocketServer(InetSocketAddress(port)) {
@@ -53,16 +53,7 @@ class MirrorWebSocketServer(
             val json = JSONObject(message)
             when (json.getString("type")) {
                 "hello" -> {
-                    // Respond with device and stream info
-                    val info = JSONObject().apply {
-                        put("type", "info")
-                        put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
-                        put("screenWidth", screenWidth)
-                        put("screenHeight", screenHeight)
-                        put("audioAvailable", audioAvailable)
-                        put("androidVersion", Build.VERSION.RELEASE)
-                    }
-                    conn.send(info.toString())
+                    conn.send(infoJson())
                     Log.i(TAG, "Sent device info to client")
                 }
                 "toggle_audio" -> {
@@ -88,6 +79,22 @@ class MirrorWebSocketServer(
 
     override fun onMessage(conn: WebSocket, message: ByteBuffer) {
         // Not expected from client side
+    }
+
+    /** Device and stream info: the hello reply, and rebroadcast when the screen rotates. */
+    private fun infoJson(): String = JSONObject().apply {
+        put("type", "info")
+        put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+        put("screenWidth", screenWidth)
+        put("screenHeight", screenHeight)
+        put("audioAvailable", audioAvailable)
+        put("androidVersion", Build.VERSION.RELEASE)
+    }.toString()
+
+    fun updateScreenSize(width: Int, height: Int) {
+        screenWidth = width
+        screenHeight = height
+        broadcast(infoJson())
     }
 
     private fun sendClipboard(conn: WebSocket) {
