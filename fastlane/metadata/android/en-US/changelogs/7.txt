@@ -1,0 +1,5 @@
+- Approve each computer on the phone before it can see or control the screen
+- Encrypted connection; the screen stream is no longer readable on the network
+- Settings: ask before connecting, remember computers, allow several at once
+- Follows the phone into landscape; the desktop window turns with it
+- The picture appears immediately on connect
