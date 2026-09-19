@@ -18,6 +18,9 @@ from remotephone.decoder.audio_player import AudioPlayer
 from remotephone.input.input_handler import InputHandler
 
 _BACK = {"type": "key", "action": "back"}
+_IDLE_HINT = "Connect to your phone\nto start mirroring"
+_APPROVAL_HINT = ("Waiting for approval on the phone\n\n"
+                  "Allow this computer in the RemotePhone\nnotification or in the app")
 
 # (key, action) rows for the help dialog and the ? button tooltip. Mirrors the
 # gesture and key handling in input_handler.py.
@@ -55,6 +58,7 @@ class VideoWidget(QWidget):
         self.input = input_handler
         self.send_command = send_command
         self.image = None
+        self.hint = _IDLE_HINT  # shown in the black area until the first frame arrives
         self.setMinimumSize(360, 360)  # square floor so a landscape window can be short
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
@@ -83,10 +87,7 @@ class VideoWidget(QWidget):
             # Placeholder
             painter.setPen(QColor(107, 114, 128))
             painter.setFont(QFont("Inter", 14))
-            painter.drawText(
-                self.rect(), Qt.AlignmentFlag.AlignCenter,
-                "Connect to your phone\nto start mirroring"
-            )
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.hint)
 
         painter.end()
 
@@ -293,6 +294,7 @@ class MainWindow(QMainWindow):
         self.ws_client.reconnecting.connect(self._on_reconnecting)
         self.ws_client.frame_received.connect(self._on_frame_received)
         self.ws_client.info_received.connect(self._on_info_received)
+        self.ws_client.approval_changed.connect(self._on_approval)
         self.ws_client.clipboard_received.connect(self._on_clipboard_received)
         self.ws_client.error_occurred.connect(self._on_error)
 
@@ -414,7 +416,7 @@ class MainWindow(QMainWindow):
             if not ip:
                 self.status_label.setText("⚠ Enter the phone's IP address")
                 return
-            url = f"ws://{ip}:{port}"
+            url = f"wss://{ip}:{port}"
             self.status_label.setText(f"Connecting to {url}...")
             self.connect_btn.setText("Cancel")
             self.ws_client.connect_to(url)
@@ -446,6 +448,7 @@ class MainWindow(QMainWindow):
             self.audio_checkbox.setEnabled(False)
             self.audio_checkbox.setChecked(False)
             self.video_widget.image = None
+            self.video_widget.hint = _IDLE_HINT
             self.video_widget.update()
             self.setWindowTitle("RemotePhone")
 
@@ -464,6 +467,15 @@ class MainWindow(QMainWindow):
 
         if info.get("audioAvailable", False):
             self.audio_checkbox.setEnabled(True)
+
+    def _on_approval(self, state: str):
+        if state == "pending":
+            self.status_label.setText("Waiting for approval on the phone...")
+            self.video_widget.hint = _APPROVAL_HINT
+        elif state == "granted":
+            self.status_label.setText("● Connected")
+            self.video_widget.hint = _IDLE_HINT
+        self.video_widget.update()
 
     def _on_clipboard_received(self, content: str):
         QApplication.clipboard().setText(content)

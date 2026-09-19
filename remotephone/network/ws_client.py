@@ -5,12 +5,17 @@ Runs in a background thread, emits Qt signals for thread-safe UI updates.
 Auto-reconnects on connection loss with exponential backoff.
 """
 
+import hashlib
+import hmac
 import json
+import secrets
+import socket
+import ssl
 import struct
 import threading
 import logging
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, QSettings, pyqtSignal
 
 import websocket
 
@@ -28,6 +33,26 @@ _VIDEO_TYPES = {FRAME_VIDEO_CONFIG, FRAME_VIDEO_KEY, FRAME_VIDEO_DELTA}
 _TYPE_NAMES = {FRAME_VIDEO_CONFIG: "CONFIG", FRAME_VIDEO_KEY: "KEY", FRAME_VIDEO_DELTA: "DELTA",
                FRAME_AUDIO_CONFIG: "AUDIO_CFG", FRAME_AUDIO_DATA: "AUDIO"}
 
+# The phone serves a self-signed certificate. The desktop makes no trust decision about it:
+# the phone's owner decides who may watch, and the answer to the phone's challenge is bound to
+# the certificate we connected to, so a relay presenting its own certificate is denied.
+SSL_OPT = {"cert_reqs": ssl.CERT_NONE, "check_hostname": False}
+
+
+def _phone_key(fingerprint: str, item: str) -> str:
+    return f"phones/{fingerprint}/{item}"
+
+
+def client_id(fingerprint: str) -> str:
+    """Our identity towards this phone, made once per phone; the owner's Allow attaches a secret to it."""
+    settings = QSettings()
+    cid = settings.value(_phone_key(fingerprint, "id"))
+    if not cid:
+        cid = secrets.token_hex(16)
+        settings.setValue(_phone_key(fingerprint, "id"), cid)
+    return cid
+
+
 # Reconnect settings
 _RECONNECT_BASE = 1.0     # initial retry delay (seconds)
 _RECONNECT_MAX = 10.0     # max retry delay
@@ -43,6 +68,7 @@ class WebSocketClient(QObject):
     reconnecting = pyqtSignal(int)   # attempt number
     frame_received = pyqtSignal(int, int, bytes)  # frame_type, timestamp, payload (audio only)
     info_received = pyqtSignal(dict)
+    approval_changed = pyqtSignal(str)  # "pending" while the phone's owner decides, then "granted"
     clipboard_received = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
 
@@ -56,6 +82,7 @@ class WebSocketClient(QObject):
         self._video_decoder = None
         self._stop_event = threading.Event()  # set once the user no longer wants to stay connected
         self._local_close = False  # True when WE initiated the disconnect
+        self._fingerprint = ""  # SHA-256 of the certificate of the phone we are connected to
 
     def set_video_decoder(self, decoder):
         """Set direct decoder reference for low-latency video frame routing."""
@@ -89,6 +116,7 @@ class WebSocketClient(QObject):
                     on_close=self._on_close,
                 )
                 self._ws.run_forever(
+                    sslopt=SSL_OPT,
                     ping_interval=5,
                     ping_timeout=3,
                     skip_utf8_validation=True,
@@ -113,17 +141,18 @@ class WebSocketClient(QObject):
     def _on_open(self, ws):
         log.info(f"Connected to {self._url}")
         self.connected.emit()
-        hello = json.dumps({
+        self._fingerprint = hashlib.sha256(ws.sock.sock.getpeercert(binary_form=True)).hexdigest().upper()
+        ws.send(json.dumps({
             "type": "hello",
             "version": 1,
-            "client": "RemotePhone-Linux",
+            "client": f"RemotePhone on {socket.gethostname()}",  # shown in the phone's Allow prompt
+            "id": client_id(self._fingerprint),
             "maxWidth": 1920,
             "maxHeight": 1920,
             "maxFps": 60,
             "videoBitrate": 8_000_000,
             "audioBitrate": 128_000,
-        })
-        ws.send(hello)
+        }))
 
     def _on_data(self, ws, data, data_type, continue_flag):
         """
@@ -168,6 +197,16 @@ class WebSocketClient(QObject):
 
             if msg_type == "info":
                 self.info_received.emit(obj)
+            elif msg_type == "approval":
+                if obj.get("secret"):
+                    # Handed over once, on the owner's Allow; it proves us on every later visit
+                    QSettings().setValue(_phone_key(self._fingerprint, "secret"), obj["secret"])
+                self.approval_changed.emit(obj.get("state", ""))
+            elif msg_type == "challenge":
+                secret = str(QSettings().value(_phone_key(self._fingerprint, "secret"), ""))
+                mac = hmac.new(secret.encode(), f"{obj.get('nonce', '')}|{self._fingerprint}".encode(),
+                               hashlib.sha256).hexdigest()
+                self.send_command({"type": "auth", "mac": mac})
             elif msg_type == "clipboard":
                 self.clipboard_received.emit(obj.get("content", ""))
             elif msg_type == "error":
@@ -186,14 +225,18 @@ class WebSocketClient(QObject):
 
     def _on_close(self, ws, close_status_code, close_msg):
         log.info(f"Disconnected (code={close_status_code}, msg={close_msg})")
-        # Clean if server stopped intentionally (code 1000) or we initiated the close
-        clean = close_status_code == 1000 or self._local_close
+        # Clean if the server stopped on purpose (1000), the phone's owner rejected us
+        # (1008, policy violation), or we initiated the close: none is worth a reconnect loop
+        rejected = close_status_code == 1008
+        clean = close_status_code == 1000 or rejected or self._local_close
         self._local_close = False
         if clean:
             self._stop_event.set()
         with self._lock:
             self._ws = None
         self.disconnected.emit(clean)
+        if rejected:
+            self.error_occurred.emit(close_msg or "Rejected on the phone")
 
     def send_command(self, command: dict):
         """Send a JSON control command to the phone."""

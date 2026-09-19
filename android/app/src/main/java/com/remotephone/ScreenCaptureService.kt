@@ -22,11 +22,14 @@ import android.media.MediaFormat
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import android.view.Surface
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
+import org.java_websocket.server.DefaultSSLWebSocketServerFactory
 import java.nio.ByteBuffer
 
 class ScreenCaptureService : Service() {
@@ -37,6 +40,10 @@ class ScreenCaptureService : Service() {
         const val CHANNEL_ID = "remote_phone_capture"
         const val ACTION_START = "com.remotephone.START"
         const val ACTION_STOP = "com.remotephone.STOP"
+        const val ACTION_APPROVE = "com.remotephone.APPROVE"
+        const val ACTION_DENY = "com.remotephone.DENY"
+        const val EXTRA_CLIENT = "client"
+        const val REQUEST_CHANNEL_ID = "remote_phone_requests"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val WS_PORT = 8765
@@ -53,6 +60,35 @@ class ScreenCaptureService : Service() {
         fun toggleAudio(enabled: Boolean) {
             instance?.setAudioEnabled(enabled)
         }
+
+        /** Addresses of the clients currently watching, or null when not mirroring. */
+        fun clients(): List<String>? = instance?.takeIf { it.isRunning }?.webSocketServer?.clientAddresses()
+
+        /** Computers waiting for the owner's answer; empty when not mirroring. */
+        fun pendingRequests(): List<MirrorWebSocketServer.PendingRequest> =
+            instance?.takeIf { it.isRunning }?.webSocketServer?.pendingRequests() ?: emptyList()
+
+        fun answer(id: String, allow: Boolean) {
+            instance?.answer(id, allow)
+        }
+
+        /** Set by the activity while visible; called on the main thread when watchers or requests change. */
+        @Volatile var onClientsChanged: ((List<String>) -> Unit)? = null
+    }
+
+    private fun answer(id: String, allow: Boolean) {
+        if (allow) webSocketServer?.approve(id) else webSocketServer?.deny(id)
+        getSystemService(NotificationManager::class.java).cancel(requestNotificationId(id))
+    }
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    // Runs on the main thread whenever the watchers or requests change
+    private val publishClients = Runnable {
+        if (!isRunning) return@Runnable
+        val clients = webSocketServer?.clientAddresses() ?: emptyList()
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(clients))
+        onClientsChanged?.invoke(clients)
     }
 
     // Video
@@ -109,6 +145,11 @@ class ScreenCaptureService : Service() {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
+            // Allow / Deny from the connection request notification
+            ACTION_APPROVE, ACTION_DENY -> {
+                intent.getStringExtra(EXTRA_CLIENT)?.let { answer(it, intent.action == ACTION_APPROVE) }
+                if (!isRunning) stopSelf()
+            }
         }
         return START_NOT_STICKY
     }
@@ -159,8 +200,12 @@ class ScreenCaptureService : Service() {
             screenWidth = screenWidth,
             screenHeight = screenHeight,
             audioAvailable = audioAvailable,
-            onControlCommand = { RemoteAccessibilityService.handleCommand(it) }
+            onControlCommand = { RemoteAccessibilityService.handleCommand(it) },
+            onClientsChanged = { mainHandler.post(publishClients) },
+            onApprovalRequest = { id, label -> requestApproval(id, label) }
         )
+        // Everything, video included, travels inside TLS under the phone's own certificate
+        webSocketServer!!.setWebSocketFactory(DefaultSSLWebSocketServerFactory(Tls.serverContext()))
         // A quick stop and start must not fail on the previous socket still closing
         webSocketServer!!.isReuseAddr = true
         webSocketServer!!.start()
@@ -469,10 +514,38 @@ class ScreenCaptureService : Service() {
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
+            // High importance so the request pops up over whatever the phone is showing
+            manager.createNotificationChannel(NotificationChannel(
+                REQUEST_CHANNEL_ID, "Connection requests", NotificationManager.IMPORTANCE_HIGH
+            ).apply { description = "Asks before a computer may view and control this phone" })
         }
     }
 
-    private fun buildNotification(): Notification {
+    private fun requestNotificationId(id: String) = 2000 + (id.hashCode() and 0xFFFF)
+
+    /** Ask the owner whether the computer [label] may watch and control the phone. Unanswered, the server denies after a minute. */
+    private fun requestApproval(id: String, label: String) {
+        fun answer(action: String) = PendingIntent.getService(
+            this, id.hashCode(),
+            Intent(this, ScreenCaptureService::class.java).setAction(action).putExtra(EXTRA_CLIENT, id),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, REQUEST_CHANNEL_ID)
+            .setContentTitle("Connection request")
+            .setContentText("Allow $label to view and control this phone?")
+            .setStyle(NotificationCompat.BigTextStyle())
+            .setSmallIcon(R.drawable.ic_cast)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setTimeoutAfter(60_000)
+            .addAction(0, "Allow", answer(ACTION_APPROVE))
+            .addAction(0, "Deny", answer(ACTION_DENY))
+            .build()
+        getSystemService(NotificationManager::class.java).notify(requestNotificationId(id), notification)
+        Log.i(TAG, "Asking to allow $label")
+    }
+
+    private fun buildNotification(clients: List<String> = emptyList()): Notification {
         val stopIntent = Intent(this, ScreenCaptureService::class.java).apply {
             action = ACTION_STOP
         }
@@ -491,7 +564,10 @@ class ScreenCaptureService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("RemotePhone")
-            .setContentText("Screen mirroring is active")
+            .setContentText(
+                if (clients.isEmpty()) "Mirroring, no client connected"
+                else "Mirroring to ${clients.joinToString(", ")}"
+            )
             .setSmallIcon(R.drawable.ic_cast)
             .setContentIntent(openPendingIntent)
             .addAction(0, "Stop", stopPendingIntent)

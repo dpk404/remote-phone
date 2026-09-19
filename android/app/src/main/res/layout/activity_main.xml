@@ -134,6 +134,33 @@
                 android:layout_marginStart="12dp" />
         </LinearLayout>
 
+        <!-- Connection Requests Card (shown while a computer waits for an answer) -->
+        <LinearLayout
+            android:id="@+id/requestsCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_background"
+            android:padding="16dp"
+            android:layout_marginTop="16dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="CONNECTION REQUESTS"
+                android:textSize="11sp"
+                android:textColor="@color/status_amber"
+                android:letterSpacing="0.15" />
+
+            <LinearLayout
+                android:id="@+id/requestsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="8dp" />
+        </LinearLayout>
+
         <!-- Audio Toggle Card -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -283,6 +310,15 @@
         <View
             android:layout_width="1dp"
             android:layout_height="48dp" />
+
+        <Button
+            android:id="@+id/settingsButton"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="Settings"
+            android:textColor="@color/accent_blue" />
 
     </LinearLayout>
 </ScrollView>

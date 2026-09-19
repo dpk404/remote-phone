@@ -40,6 +40,7 @@ def app_icon() -> QIcon:
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("RemotePhone")
+    app.setOrganizationName("RemotePhone")  # QSettings: client id and trusted phones
     app.setWindowIcon(app_icon())
     app.setStyle("Fusion")
 

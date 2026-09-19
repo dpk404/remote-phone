@@ -6,8 +6,11 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.Gravity
+import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
 import androidx.activity.ComponentActivity
@@ -28,6 +31,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var accessibilityButton: Button
     private lateinit var keyboardStatus: TextView
     private lateinit var keyboardButton: Button
+    private lateinit var requestsCard: View
+    private lateinit var requestsContainer: LinearLayout
 
     private var isStreaming = false
 
@@ -56,6 +61,8 @@ class MainActivity : ComponentActivity() {
         audioSubtext = findViewById(R.id.audioSubtext)
         accessibilityStatus = findViewById(R.id.accessibilityStatus)
         accessibilityButton = findViewById(R.id.accessibilityButton)
+        requestsCard = findViewById(R.id.requestsCard)
+        requestsContainer = findViewById(R.id.requestsContainer)
 
         // Show device IP
         ipText.text = getDeviceIpAddress()
@@ -89,6 +96,10 @@ class MainActivity : ComponentActivity() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
+        findViewById<Button>(R.id.settingsButton).setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+
         // Android 13+ types through the accessibility service's own input
         // connection, so the extra keyboard (and its card) is only wired on older versions
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -116,7 +127,56 @@ class MainActivity : ComponentActivity() {
         updateAccessibilityStatus()
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) updateKeyboardStatus()
         ipText.text = getDeviceIpAddress()
+        ScreenCaptureService.onClientsChanged = ::showStreaming
+        ScreenCaptureService.clients()?.let(::showStreaming)
     }
+
+    override fun onPause() {
+        ScreenCaptureService.onClientsChanged = null
+        super.onPause()
+    }
+
+    /** Streaming state with who is watching, so a silent viewer on the network is never invisible. */
+    private fun showStreaming(clients: List<String>) {
+        isStreaming = true
+        startButton.text = "Stop Mirroring"
+        statusDot.text = "\u25CF"
+        if (clients.isEmpty()) {
+            statusText.text = "Streaming, waiting for a client"
+            statusDot.setTextColor(getColor(R.color.status_amber))
+        } else {
+            statusText.text = "Streaming to ${clients.joinToString(", ")}"
+            statusDot.setTextColor(getColor(R.color.status_green))
+        }
+        showRequests(ScreenCaptureService.pendingRequests())
+    }
+
+    /** Computers waiting for an answer, with Allow and Deny, so a request never depends on the notification. */
+    private fun showRequests(requests: List<MirrorWebSocketServer.PendingRequest>) {
+        requestsCard.visibility = if (requests.isEmpty()) View.GONE else View.VISIBLE
+        requestsContainer.removeAllViews()
+        for ((id, name, address) in requests) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            row.addView(TextView(this).apply {
+                text = if (name.isBlank()) address else "$name\n$address"
+                textSize = 13f
+                setTextColor(getColor(R.color.text_secondary))
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(answerButton("Allow", R.color.status_green) { ScreenCaptureService.answer(id, true) })
+            row.addView(answerButton("Deny", R.color.status_red) { ScreenCaptureService.answer(id, false) })
+            requestsContainer.addView(row)
+        }
+    }
+
+    private fun answerButton(label: String, color: Int, onClick: () -> Unit) =
+        Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+            text = label
+            setTextColor(getColor(color))
+            setOnClickListener { onClick() }
+        }
 
     private fun requestScreenCapture() {
         val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -136,11 +196,7 @@ class MainActivity : ComponentActivity() {
             startService(intent)
         }
 
-        isStreaming = true
-        startButton.text = "Stop Mirroring"
-        statusText.text = "Streaming"
-        statusDot.text = "●"
-        statusDot.setTextColor(getColor(R.color.status_green))
+        showStreaming(emptyList())
     }
 
     private fun stopScreenCapture() {
@@ -150,6 +206,7 @@ class MainActivity : ComponentActivity() {
         startService(intent)
 
         isStreaming = false
+        showRequests(emptyList())
         startButton.text = "Start Mirroring"
         statusText.text = "Ready to stream"
         statusDot.text = "○"

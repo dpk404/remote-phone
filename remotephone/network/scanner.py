@@ -16,6 +16,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import websocket
+
+from remotephone.network.ws_client import SSL_OPT
 from PyQt6.QtCore import QObject, pyqtSignal
 
 log = logging.getLogger("scanner")
@@ -101,10 +103,11 @@ def is_remotephone_server(ip: str, port: int) -> bool:
     """
     ws = None
     try:
-        ws = websocket.create_connection(f"ws://{ip}:{port}", timeout=VERIFY_TIMEOUT)
-        ws.send(json.dumps({"type": "hello", "version": 1, "client": "RemotePhone-Scan"}))
-        # On connect the server may first push a binary video-config frame; the
-        # text `info` reply follows the hello. Skip a few non-text frames to find it.
+        ws = websocket.create_connection(f"wss://{ip}:{port}", timeout=VERIFY_TIMEOUT, sslopt=SSL_OPT)
+        # `probe` asks only for identification: the phone never prompts its owner for a scan
+        ws.send(json.dumps({"type": "hello", "version": 1, "client": "RemotePhone-Scan", "probe": True}))
+        # Older servers may push a binary video-config frame before the text `info`
+        # reply. Skip a few non-text frames to find it.
         for _ in range(4):
             msg = ws.recv()
             if isinstance(msg, str) and msg:
