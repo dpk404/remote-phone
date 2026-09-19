@@ -235,7 +235,7 @@ class MainWindow(QMainWindow):
 
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.setObjectName("connectBtn")
-        self.connect_btn.setFixedWidth(100)
+        self.connect_btn.setFixedWidth(110)  # "Disconnect", the widest label, needs 107 at 13px bold
 
         self.audio_checkbox = QCheckBox("Audio")
         self.audio_checkbox.setEnabled(False)
