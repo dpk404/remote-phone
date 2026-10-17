@@ -111,6 +111,10 @@ xattr -d com.apple.quarantine /Applications/RemotePhone.app
 
 To build the app yourself: `pip install -e . pyinstaller && tools/build_mac.sh` (output in `dist/`).
 
+### 3. Web Client (optional, nothing to install)
+
+The `web/` folder is a static browser client with the same features as the desktop client: two files, no build step, no server-side code. Host it anywhere static or open `web/index.html` directly, open `https://<phone-ip>:8765` once to accept the phone's certificate, then connect. See [web/README.md](web/README.md).
+
 ---
 
 ## Usage
