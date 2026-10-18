@@ -116,7 +116,7 @@ To build the app yourself: `pip install -e . pyinstaller && tools/build_mac.sh` 
 ## Usage
 
 1. **On your phone:** Open RemotePhone -> tap **"Start Mirroring"** -> grant the screen capture permission
-2. **On your computer:** Run the desktop client. It auto-scans the network and connects if one phone is found
+2. **On your computer:** Run the desktop client. It auto-scans the network and connects if one phone is found. Untick **Auto-scan** in the status bar to skip the scan on later launches; the client remembers the last IP it connected to
 3. **Back on the phone:** a connection request appears as a notification and as a card on the app's main screen. Tap **Allow**. The picture shows up at once
 4. If auto-connect doesn't work, enter the phone's IP (shown in the app) and click **Connect**
 

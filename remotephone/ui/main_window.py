@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QStatusBar,
     QSizePolicy, QCheckBox, QMessageBox
 )
-from PyQt6.QtCore import Qt, QRectF, QTimer
+from PyQt6.QtCore import Qt, QRectF, QTimer, QSettings
 from PyQt6.QtGui import QImage, QPainter, QColor, QFont, QKeyEvent
 
 from remotephone.network.ws_client import WebSocketClient, FRAME_AUDIO_DATA
@@ -199,8 +199,8 @@ class MainWindow(QMainWindow):
         self.fps_timer.timeout.connect(self._update_fps)
         self.fps_timer.start(1000)
 
-        # Auto-scan for phone on startup
-        self.scanner.start_scan()
+        if self.autoscan_checkbox.isChecked():
+            self.scanner.start_scan()
 
     def _setup_ui(self):
         central = QWidget()
@@ -219,8 +219,9 @@ class MainWindow(QMainWindow):
         ip_label = QLabel("IP:")
         ip_label.setFixedWidth(18)
         self.ip_input = QLineEdit()
-        self.ip_input.setPlaceholderText("Scanning...")
+        self.ip_input.setPlaceholderText("Phone IP address")
         self.ip_input.setFixedWidth(160)
+        self.ip_input.setText(QSettings().value("last_ip", "", type=str))
 
         self.scan_btn = QPushButton("Scan")
         self.scan_btn.setObjectName("scanBtn")
@@ -271,10 +272,16 @@ class MainWindow(QMainWindow):
         self.shortcuts_btn.setToolTip(SHORTCUTS_TOOLTIP)  # hover for the list, click for the dialog
         self.shortcuts_btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
+        # Lives in the status bar: the connection bar already dictates the window's minimum width
+        self.autoscan_checkbox = QCheckBox("Auto-scan")
+        self.autoscan_checkbox.setToolTip("Scan the network for the phone when the app starts")
+        self.autoscan_checkbox.setChecked(QSettings().value("auto_scan", True, type=bool))
+
         self.status_bar.addWidget(self.status_label, 1)
         self.status_bar.addPermanentWidget(self.resolution_label)
         self.status_bar.addPermanentWidget(self.device_label)
         self.status_bar.addPermanentWidget(self.fps_label)
+        self.status_bar.addPermanentWidget(self.autoscan_checkbox)
         self.status_bar.addPermanentWidget(self.shortcuts_btn)
 
     def _setup_connections(self):
@@ -283,6 +290,7 @@ class MainWindow(QMainWindow):
         self.ip_input.returnPressed.connect(self._on_connect_clicked)
         self.scan_btn.clicked.connect(self._on_scan_clicked)
         self.shortcuts_btn.clicked.connect(self._show_shortcuts)
+        self.autoscan_checkbox.toggled.connect(lambda on: QSettings().setValue("auto_scan", on))
 
         # Scanner signals
         self.scanner.scan_started.connect(self._on_scan_started)
@@ -425,6 +433,7 @@ class MainWindow(QMainWindow):
 
     def _on_connected(self):
         self.connected = True
+        QSettings().setValue("last_ip", self.ip_input.text().strip())
         self.connect_btn.setText("Disconnect")
         self.status_label.setText("● Connected")
         self.decoder.start()
