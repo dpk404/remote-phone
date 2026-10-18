@@ -101,6 +101,16 @@ remotephone
 
 The launcher script creates a virtual environment and installs the package into it.
 
+**Option C: macOS app (no Python needed)**
+
+Download `RemotePhone-<version>-macos-arm64.dmg` from [Releases](https://github.com/dpk404/remote-phone/releases), open it, and drag RemotePhone into Applications. The app is not notarized, so macOS blocks the first launch: go to **System Settings -> Privacy & Security** and click **Open Anyway**, or clear the quarantine flag:
+
+```bash
+xattr -d com.apple.quarantine /Applications/RemotePhone.app
+```
+
+To build the app yourself: `pip install -e . pyinstaller && tools/build_mac.sh` (output in `dist/`).
+
 ---
 
 ## Usage
