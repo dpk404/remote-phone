@@ -42,8 +42,9 @@ jobs:
         run: ./gradlew assembleRelease
 
       - name: Rename APK
+        # Named after the app's own version, not the tag: a desktop-only release ships the unchanged APK honestly
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION=$(sed -n 's/.*versionName = "\(.*\)"/\1/p' android/app/build.gradle.kts)
           cp android/app/build/outputs/apk/release/app-release.apk RemotePhone-${VERSION}.apk
 
       - name: Upload APK artifact
@@ -98,5 +99,5 @@ jobs:
           gh release create "v${VERSION}" \
             --title "RemotePhone v${VERSION}" \
             --generate-notes \
-            RemotePhone-${VERSION}.apk \
+            RemotePhone-*.apk \
             RemotePhone-linux-${VERSION}.tar.gz
