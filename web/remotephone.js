@@ -17,7 +17,7 @@ const FRAME_AUDIO_DATA = 0x11;
 
 const $ = (id) => document.getElementById(id);
 const ui = {
-  host: $('host'), port: $('port'), fingerprint: $('fingerprint'), connect: $('connect'),
+  host: $('host'), port: $('port'), fingerprint: $('fingerprint'), fpmsg: $('fpmsg'), connect: $('connect'),
   audio: $('audio'), status: $('status'), stage: $('stage'), canvas: $('screen'), hint: $('hint'),
   fullscreen: $('fullscreen'),
 };
@@ -52,6 +52,26 @@ function randomHex(bytes) {
 
 function normalizeFingerprint(fp) {
   return fp.replace(/^.*=/, '').replace(/[^0-9a-fA-F]/g, '').toUpperCase();
+}
+
+// 'empty' when the box is blank, 'ok' for 64 hex characters, 'invalid' for anything else. A value
+// that is silently dropped looks like a phone that keeps asking, so the box says so instead.
+function fingerprintState(raw) {
+  const fp = normalizeFingerprint(raw || '');
+  if (!fp) return { state: 'empty', fp };
+  return { state: fp.length === 64 ? 'ok' : 'invalid', fp };
+}
+
+// Red border and a line under the box while the value cannot be used
+function showFingerprintState() {
+  const { state } = fingerprintState(ui.fingerprint.value);
+  const invalid = state === 'invalid';
+  ui.fingerprint.classList.toggle('invalid', invalid);
+  ui.fpmsg.style.display = invalid ? 'block' : 'none';
+  ui.fpmsg.textContent = invalid
+    ? 'A SHA-256 fingerprint is 64 hex characters. Fix it, or clear the box to connect without one.'
+    : '';
+  return state;
 }
 
 // Browsers cannot read the peer certificate, so the phone is keyed by host:port here.
@@ -831,6 +851,7 @@ function updateButtons() {
 
 ui.connect.addEventListener('click', () => {
   if (conn.wantConnected) { conn.stop(); setStatus('Disconnected'); return; }
+  if (showFingerprintState() === 'invalid') { ui.fingerprint.focus(); return; }
   // "ws://host" forces plain WebSocket (e.g. behind a TLS-terminating proxy or for testing)
   const raw = ui.host.value.trim();
   const scheme = /^ws:\/\//i.test(raw) ? 'ws' : 'wss';
@@ -839,6 +860,10 @@ ui.connect.addEventListener('click', () => {
   if (!host) { ui.host.focus(); return; }
   store.set('last/host', host);
   store.set('last/port', port);
+  // Saved now, keyed by the host being connected to: pasting the fingerprint before typing the
+  // IP used to store it under an empty host
+  const fp = fingerprintState(ui.fingerprint.value);
+  if (fp.state === 'ok') store.set('fp/' + host, fp.fp);
   setHint('');
   conn.start(host, port, scheme);
   updateButtons();
@@ -846,8 +871,11 @@ ui.connect.addEventListener('click', () => {
 
 for (const el of [ui.host, ui.port]) el.addEventListener('keydown', (e) => { if (e.key === 'Enter') ui.connect.click(); });
 
-ui.fingerprint.addEventListener('change', () => store.set('fp/' + ui.host.value.trim(), normalizeFingerprint(ui.fingerprint.value)));
-ui.host.addEventListener('change', () => { ui.fingerprint.value = store.get('fp/' + ui.host.value.trim()); });
+ui.fingerprint.addEventListener('input', showFingerprintState);
+ui.host.addEventListener('change', () => {
+  ui.fingerprint.value = store.get('fp/' + ui.host.value.trim());
+  showFingerprintState();
+});
 
 ui.audio.addEventListener('change', () => {
   // Starting the AudioContext inside this click satisfies the browser autoplay policy
@@ -885,6 +913,7 @@ const params = new URLSearchParams(location.search);
 ui.host.value = params.get('host') || store.get('last/host');
 ui.port.value = params.get('port') || store.get('last/port', '8765');
 ui.fingerprint.value = params.get('fp') || store.get('fp/' + ui.host.value);
+showFingerprintState();
 fitCanvas();
 updateButtons();
 

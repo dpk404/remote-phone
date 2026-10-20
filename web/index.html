@@ -14,6 +14,8 @@
   header .grow { flex:1; }
   input { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font:inherit; }
   #host { width:150px; } #port { width:70px; } #fingerprint { width:260px; font-family:ui-monospace, monospace; font-size:12px; }
+  #fingerprint.invalid { border-color:var(--bad); }
+  #fpmsg { display:none; margin-top:4px; font-size:11px; color:var(--bad); max-width:260px; }
   button { background:#232835; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font:inherit; cursor:pointer; }
   button:hover:not(:disabled) { border-color:var(--acc); }
   button:disabled { opacity:.45; cursor:default; }
@@ -40,6 +42,7 @@
   <details>
     <summary>Certificate fingerprint</summary>
     <input id="fingerprint" placeholder="SHA-256, optional" autocomplete="off" spellcheck="false">
+    <div id="fpmsg"></div>
   </details>
   <span class="grow"></span>
   <span id="status">Disconnected</span>
