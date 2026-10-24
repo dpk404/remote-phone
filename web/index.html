@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RemotePhone Web</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: dark; --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --fg:#e6e8ee; --dim:#8a91a3; --acc:#4f8cff; --bad:#ff6b6b; --ok:#3ddc97; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, sans-serif; }
+  body { display:flex; flex-direction:column; }
+  header { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:8px 12px; background:var(--panel); border-bottom:1px solid var(--line); }
+  header .grow { flex:1; }
+  input { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font:inherit; }
+  #host { width:150px; } #port { width:70px; } #fingerprint { width:260px; font-family:ui-monospace, monospace; font-size:12px; }
+  #fingerprint.invalid { border-color:var(--bad); }
+  #fpmsg { display:none; margin-top:4px; font-size:11px; color:var(--bad); max-width:260px; }
+  button { background:#232835; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font:inherit; cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--acc); }
+  button:disabled { opacity:.45; cursor:default; }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+  label { display:flex; gap:6px; align-items:center; color:var(--dim); }
+  #status { color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:40vw; }
+  #status.err { color:var(--bad); } #status.ok { color:var(--ok); }
+  #stage { flex:1; position:relative; overflow:hidden; display:flex; align-items:center; justify-content:center; outline:none; }
+  #screen { display:block; background:#000; touch-action:none; cursor:default; box-shadow:0 0 0 1px var(--line); }
+  #hint { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:24px; color:var(--dim); pointer-events:none; }
+  #hint a { color:var(--acc); pointer-events:auto; }
+  #hint div { max-width:560px; }
+  details { color:var(--dim); }
+  footer { display:flex; gap:6px; justify-content:center; padding:6px; background:var(--panel); border-top:1px solid var(--line); }
+  code { background:#232835; padding:1px 4px; border-radius:4px; }
+</style>
+</head>
+<body>
+<header>
+  <input id="host" placeholder="Phone IP (e.g. 192.168.1.42)" autocomplete="off" spellcheck="false">
+  <input id="port" value="8765" inputmode="numeric">
+  <button id="connect" class="primary">Connect</button>
+  <label title="Stream phone audio (Android 10+)"><input type="checkbox" id="audio" disabled> Audio</label>
+  <details>
+    <summary>Certificate fingerprint</summary>
+    <input id="fingerprint" placeholder="SHA-256, optional" autocomplete="off" spellcheck="false">
+    <div id="fpmsg"></div>
+  </details>
+  <span class="grow"></span>
+  <span id="status">Disconnected</span>
+</header>
+<main id="stage" tabindex="0">
+  <canvas id="screen" width="360" height="780"></canvas>
+  <div id="hint"><div>Enter the IP shown in the RemotePhone app and press <b>Connect</b>.</div></div>
+</main>
+<footer>
+  <button data-key="back" title="Back (Esc / right click)">◀ Back</button>
+  <button data-key="home" title="Home">● Home</button>
+  <button data-key="recents" title="Recents (F2)">■ Recents</button>
+  <button data-key="notifications" title="Notifications (F5)">Notifications</button>
+  <button data-key="quick_settings" title="Quick settings (F6)">Quick settings</button>
+  <button data-key="power" title="Lock (F10)">Lock</button>
+  <button id="fullscreen" title="Fullscreen (F11)">⛶</button>
+</footer>
+<script src="remotephone.js"></script>
+</body>
+</html>
