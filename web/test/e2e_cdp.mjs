@@ -1,19 +1,24 @@
 // End-to-end check of the web client against mock_phone.py using a headless Chromium over CDP.
-// Usage: node web/test/e2e_cdp.mjs <chrome-binary> <page-url>
+// Usage: node web/test/e2e_cdp.mjs <chrome-binary> <page-url>   (Node 22+, for the global WebSocket)
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const [chrome, url] = process.argv.slice(2);
 const port = Number(process.env.CDP_PORT || 9333);
-const proc = spawn(chrome, ['--headless=new', '--remote-debugging-port=' + port, '--user-data-dir=/tmp/rp-cdp-profile',
+const proc = spawn(chrome, ['--headless=new', '--remote-debugging-port=' + port, '--user-data-dir=' + join(tmpdir(), 'rp-cdp-profile'),
   '--no-first-run', '--window-size=900,1000', ...(process.env.CHROME_ARGS || '').split(' ').filter(Boolean), 'about:blank'], { stdio: 'ignore' });
+process.on('exit', () => proc.kill()); // whatever happens below, the browser does not outlive this script
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-let targets;
+let targets = [];
 for (let i = 0; i < 50; i++) { try { targets = await (await fetch('http://127.0.0.1:' + port + '/json')).json(); break; } catch { await sleep(200); } }
 const page = targets.find((t) => t.type === 'page');
+if (!page) throw new Error('no CDP page target on port ' + port + ' within 10 s; is ' + chrome + ' a Chromium binary?');
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((r) => ws.addEventListener('open', r));
-ws.addEventListener('close', (e) => { console.log('CDP closed', e.code, e.reason, JSON.stringify(logs)); process.exit(2); });
+let closing = false;
+ws.addEventListener('close', (e) => { if (closing) return; console.log('CDP closed', e.code, e.reason, JSON.stringify(logs)); process.exit(2); });
 const keepAlive = setInterval(() => {}, 1000);
 let id = 0; const pending = new Map(); const logs = [];
 ws.addEventListener('message', (ev) => {
@@ -39,6 +44,10 @@ const state = await evalJs(`({
   rect: (() => { const r = document.getElementById('screen').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })(),
 })`);
 console.log('STATE', JSON.stringify(state));
+let failed = false;
+const check = (cond, what) => { if (!cond) { failed = true; console.error('FAIL', what); } };
+check(state.decoded > 0, 'no frames decoded');
+check(/^Connected to/.test(state.status), 'status: ' + state.status);
 
 const [L, T, W, H] = state.rect;
 const mouse = (type, x, y, extra = {}) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra });
@@ -69,7 +78,11 @@ await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'c', code: 'KeyC', mo
 await sleep(800);
 console.log('STATUS_AFTER', await evalJs("document.getElementById('status').textContent"));
 const shot = await send('Page.captureScreenshot', { format: 'png' });
-writeFileSync('/tmp/rp-e2e.png', Buffer.from(shot.result.data, 'base64'));
+const png = join(tmpdir(), 'rp-e2e.png');
+writeFileSync(png, Buffer.from(shot.result.data, 'base64'));
 console.log('LOGS', JSON.stringify(logs));
-ws.close(); proc.kill();
-process.exit(0);
+console.log(failed ? 'e2e: FAIL' : 'e2e: ok', 'screenshot', png);
+closing = true;
+send('Browser.close'); // a clean shutdown, or the next run restores this run's tab and it connects too
+await sleep(500);
+process.exit(failed ? 1 : 0);

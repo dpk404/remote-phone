@@ -63,6 +63,12 @@ def frame(t, payload, ts=0):
 approved = {}  # id -> secret
 
 async def handler(ws, fp):
+    try:
+        await session(ws, fp)
+    except websockets.ConnectionClosed:  # the client may drop the socket at any point, e.g. to re-ask for approval
+        pass
+
+async def session(ws, fp):
     config, frames = STREAM
     hello = json.loads(await ws.recv())
     print("<-", hello, flush=True)
@@ -99,7 +105,6 @@ async def handler(ws, fp):
         t0 = time.monotonic(); n = 0; phase = 0.0
         while True:
             t, nal = frames[n % len(frames)]
-            if n and n % len(frames) == 0: await ws.send(frame(0x00, config))
             await ws.send(frame(t, nal, int((time.monotonic() - t0) * 1000)))
             if audio_on and n % 3 == 0:  # ~100 ms of a 440 Hz tone
                 import math
@@ -110,8 +115,6 @@ async def handler(ws, fp):
                 await ws.send(frame(0x11, bytes(buf)))
             n += 1
             await asyncio.sleep(max(0, t0 + n / 30 - time.monotonic()))
-    except websockets.ConnectionClosed:
-        pass
     finally:
         rt.cancel()
 

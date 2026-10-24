@@ -112,10 +112,11 @@ function avcCodecString(config) {
 }
 
 class VideoPipeline {
-  constructor(canvas, onSize) {
+  constructor(canvas, onSize, onUnsupported) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
     this.onSize = onSize;
+    this.onUnsupported = onUnsupported;
     this.decoder = null;
     this.config = null;
     this.codec = null;
@@ -142,14 +143,28 @@ class VideoPipeline {
     this.decoder = new VideoDecoder({
       output: (frame) => this.present(frame),
       error: (e) => {
-        console.warn('VideoDecoder error, will recreate at next keyframe:', e);
         this.decoder = null;
         this.needKey = true;
+        if (e.name === 'NotSupportedError') this.onUnsupported(e);
+        else console.warn('VideoDecoder error, will recreate at next keyframe:', e);
       },
     });
-    // No "description" => the decoder expects Annex-B, exactly what MediaCodec emits.
-    this.decoder.configure({ codec: this.codec, optimizeForLatency: true });
+    this.configure();
     this.needKey = true;
+  }
+
+  /** False when this browser cannot decode the stream; the connection then switches to MSE. */
+  configure() {
+    try {
+      // No "description" => the decoder expects Annex-B, exactly what MediaCodec emits.
+      this.decoder.configure({ codec: this.codec, optimizeForLatency: true });
+      return true;
+    } catch (e) {
+      try { this.decoder.close(); } catch { /* ignore */ }
+      this.decoder = null;
+      this.onUnsupported(e);
+      return false;
+    }
   }
 
   feed(type, payload) {
@@ -161,16 +176,18 @@ class VideoPipeline {
       return;
     }
     if (!this.config) return;
-    if (!this.decoder || this.decoder.state === 'closed') {
-      if (type !== FRAME_VIDEO_KEY) return;
-      this.createDecoder();
-    }
     const isKey = type === FRAME_VIDEO_KEY;
-    if (!isKey) {
-      if (this.needKey) return;
-      // Decoder falling behind: drop deltas until the next keyframe (one per second)
-      if (this.decoder.decodeQueueSize > 4) { this.needKey = true; return; }
+    if (!this.decoder || this.decoder.state === 'closed') {
+      if (!isKey) return;
+      this.createDecoder();
+      if (!this.decoder) return;
+    } else if (isKey && this.decoder.decodeQueueSize > 4) {
+      // Falling behind: a keyframe decodes on its own, so drop the backlog here rather than
+      // dropping deltas, which would freeze the picture until the next keyframe
+      this.decoder.reset();
+      if (!this.configure()) return;
     }
+    if (!isKey && this.needKey) return;
     const data = isKey ? concatBytes(this.config, payload) : payload;
     this.ts += 16_667;
     try {
@@ -324,11 +341,18 @@ class MsePipeline {
     this.config = null; this.sps = null; this.pps = null;
     this.ms = null; this.sb = null; this.queue = []; this.started = false;
     this.seq = 1; this.time = 0;
-    this.video.removeAttribute('src');
+    this.detach();
     try { this.video.load(); } catch { /* ignore */ }
   }
 
+  detach() {
+    if (this.video.src.startsWith('blob:')) URL.revokeObjectURL(this.video.src);
+    this.video.removeAttribute('src');
+    this.video.srcObject = null;
+  }
+
   openSource() {
+    this.detach();
     const ms = new this.MS();
     this.ms = ms; this.sb = null; this.queue = []; this.started = false; this.seq = 1; this.time = 0;
     if (window.ManagedMediaSource && ms instanceof window.ManagedMediaSource) this.video.srcObject = ms;
@@ -397,7 +421,8 @@ class MsePipeline {
     // Live edge: never let playback lag more than a few frames behind what arrived
     if (end - v.currentTime > 0.25 || v.currentTime < v.buffered.start(0)) v.currentTime = Math.max(v.buffered.start(0), end - 0.03);
     if (v.paused) v.play().catch(() => {});
-    if (this.sb && !this.sb.updating && v.currentTime > 10) {
+    // Trim old data once more than 10 s of it has piled up, not on every frame
+    if (this.sb && !this.sb.updating && v.buffered.start(0) < v.currentTime - 10) {
       try { this.sb.remove(0, v.currentTime - 5); } catch { /* ignore */ }
     }
     if (v.readyState < 2 || !v.videoWidth) return;
@@ -565,8 +590,10 @@ class InputMapper {
   /** Returns true when the key was consumed. */
   onKey(e) {
     if (e.isComposing) return false;
-    if (e.key === 'F11') { e.preventDefault(); toggleFullscreen(); return true; }
     const mod = e.ctrlKey || e.metaKey;
+    // A held system key or shortcut fires once; only text, Backspace and Delete auto-repeat (as on the desktop)
+    if (e.repeat && (e.key === 'F11' || KEY_ACTIONS[e.key] || (mod && CTRL_COMMANDS[e.key.toLowerCase()]))) return true;
+    if (e.key === 'F11') { e.preventDefault(); toggleFullscreen(); return true; }
     const altGr = e.getModifierState && e.getModifierState('AltGraph');
     if (KEY_ACTIONS[e.key] && !mod) { this.send({ type: 'key', action: KEY_ACTIONS[e.key] }); return true; }
     if (KEY_COMMANDS[e.key] && !mod) { this.send(KEY_COMMANDS[e.key]); return true; }
@@ -599,7 +626,8 @@ class PhoneConnection {
     this.key = '';
     this.host = ''; this.port = '';
     this.info = null;
-    this.video = pickVideoPipeline();
+    this.fingerprint = '';
+    this.video = pickVideoPipeline((e) => this.useMse(e));
     this.audio = new AudioPipeline();
     this.input = new InputMapper(ui.canvas, (cmd) => this.sendCommand(cmd));
   }
@@ -607,9 +635,10 @@ class PhoneConnection {
   get url() { return this.scheme + '://' + (this.host.includes(':') ? '[' + this.host + ']' : this.host) + ':' + this.port; }
   get certUrl() { return 'https://' + (this.host.includes(':') ? '[' + this.host + ']' : this.host) + ':' + this.port + '/'; }
 
-  start(host, port, scheme = 'wss') {
+  start(host, port, scheme = 'wss', fingerprint = '') {
     this.stop();
     this.host = host; this.port = port; this.scheme = scheme;
+    this.fingerprint = fingerprint; // fixed for the session, so edits to the box do not change the answer
     this.key = phoneKey(host, port);
     this.wantConnected = true;
     this.everOpened = false;
@@ -715,8 +744,7 @@ class PhoneConnection {
         break;
       case 'challenge': {
         const secret = store.get(this.key + '/secret');
-        const fp = normalizeFingerprint(ui.fingerprint.value);
-        if (!secret || fp.length !== 64 || !crypto.subtle) {
+        if (!secret || !this.fingerprint || !crypto.subtle) {
           // Without the certificate fingerprint the challenge can't be answered from a browser.
           // Fall back to a fresh identity, which makes the phone ask its owner again.
           this.forgetIdentity();
@@ -724,16 +752,16 @@ class PhoneConnection {
           this.rawReconnect();
           return;
         }
-        const mac = await hmacHex(secret, (msg.nonce || '') + '|' + fp);
+        const mac = await hmacHex(secret, (msg.nonce || '') + '|' + this.fingerprint);
         this.sendCommand({ type: 'auth', mac });
         break;
       }
       case 'clipboard':
-        if (msg.content) {
-          navigator.clipboard?.writeText(msg.content).then(
-            () => setStatus('Copied to clipboard (' + msg.content.length + ' chars)', 'ok'),
-            () => setStatus('Phone clipboard received, but the browser refused clipboard access', 'err'));
-        }
+        if (!msg.content) break;
+        // No clipboard API over plain http: hand the text over in a prompt instead of losing it
+        (navigator.clipboard ? navigator.clipboard.writeText(msg.content) : Promise.reject()).then(
+          () => setStatus('Copied to clipboard (' + msg.content.length + ' chars)', 'ok'),
+          () => { setStatus('Browser refused clipboard access', 'err'); prompt('Phone clipboard (copy it from here):', msg.content); });
         break;
       case 'error':
         setStatus(msg.message || 'Unknown error', 'err');
@@ -747,6 +775,17 @@ class PhoneConnection {
     this.ws = null;
     if (old) { old.onclose = null; try { old.close(1000); } catch { /* ignore */ } }
     this.open();
+  }
+
+  /** WebCodecs is present but cannot decode this stream (no H.264 decoder, odd profile): use MSE. */
+  useMse(e) {
+    const old = this.video, config = old.config;
+    if (!MsePipeline.supported()) { setStatus('This browser cannot decode the phone\'s video: ' + (e.message || e), 'err'); return; }
+    console.warn('WebCodecs cannot decode this stream, switching to MSE:', e);
+    old.reset();
+    this.video = new MsePipeline(ui.canvas, fitCanvas);
+    if (this.info) this.video.setScreenSize(this.info.screenWidth, this.info.screenHeight);
+    if (config) this.video.feed(FRAME_VIDEO_CONFIG, config);
   }
 
   onClose(ev) {
@@ -830,11 +869,11 @@ function toggleFullscreen() {
   else document.documentElement.requestFullscreen?.();
 }
 
-function pickVideoPipeline() {
+function pickVideoPipeline(onUnsupported) {
   const forced = new URLSearchParams(location.search).get('decoder');
   const onSize = () => fitCanvas();
   // WebCodecs is only exposed in secure contexts; MSE also works over plain http on the LAN
-  if (forced !== 'mse' && window.isSecureContext && VideoPipeline.supported()) return new VideoPipeline(ui.canvas, onSize);
+  if (forced !== 'mse' && window.isSecureContext && VideoPipeline.supported()) return new VideoPipeline(ui.canvas, onSize, onUnsupported);
   if (forced !== 'webcodecs' && MsePipeline.supported()) return new MsePipeline(ui.canvas, onSize);
   return null;
 }
@@ -849,30 +888,39 @@ function updateButtons() {
   for (const b of document.querySelectorAll('footer button[data-key]')) b.disabled = !conn.granted;
 }
 
+// True while the fingerprint box holds something the user entered rather than a value restored
+// from storage, so changing the host afterwards must not wipe it (paste first, then type the IP)
+let fpTyped = false;
+
 ui.connect.addEventListener('click', () => {
   if (conn.wantConnected) { conn.stop(); setStatus('Disconnected'); return; }
-  if (showFingerprintState() === 'invalid') { ui.fingerprint.focus(); return; }
+  if (showFingerprintState() === 'invalid') { ui.fingerprint.closest('details').open = true; ui.fingerprint.focus(); return; }
   // "ws://host" forces plain WebSocket (e.g. behind a TLS-terminating proxy or for testing)
   const raw = ui.host.value.trim();
   const scheme = /^ws:\/\//i.test(raw) ? 'ws' : 'wss';
-  const host = raw.replace(/^wss?:\/\//i, '').replace(/[\/\s].*$/, '');
+  let host = raw.replace(/^wss?:\/\//i, '').replace(/[\/\s].*$/, '');
+  // "192.168.1.5:8765" typed into the host box: the port belongs in its own field
+  const hostPort = host.match(/^([^:\[\]]+):(\d+)$/);
+  if (hostPort) { host = hostPort[1]; ui.host.value = (scheme === 'ws' ? 'ws://' : '') + host; ui.port.value = hostPort[2]; }
   const port = (ui.port.value.trim() || '8765');
   if (!host) { ui.host.focus(); return; }
   store.set('last/host', host);
   store.set('last/port', port);
   // Saved now, keyed by the host being connected to: pasting the fingerprint before typing the
-  // IP used to store it under an empty host
+  // IP used to store it under an empty host. An emptied box forgets the stored value as well.
   const fp = fingerprintState(ui.fingerprint.value);
-  if (fp.state === 'ok') store.set('fp/' + host, fp.fp);
+  if (fp.state === 'ok') store.set('fp/' + host, fp.fp); else store.del('fp/' + host);
+  fpTyped = false;
   setHint('');
-  conn.start(host, port, scheme);
+  conn.start(host, port, scheme, fp.fp);
   updateButtons();
 });
 
 for (const el of [ui.host, ui.port]) el.addEventListener('keydown', (e) => { if (e.key === 'Enter') ui.connect.click(); });
 
-ui.fingerprint.addEventListener('input', showFingerprintState);
+ui.fingerprint.addEventListener('input', () => { fpTyped = !!ui.fingerprint.value.trim(); showFingerprintState(); });
 ui.host.addEventListener('change', () => {
+  if (fpTyped) return;
   ui.fingerprint.value = store.get('fp/' + ui.host.value.trim());
   showFingerprintState();
 });
@@ -881,6 +929,7 @@ ui.audio.addEventListener('change', () => {
   // Starting the AudioContext inside this click satisfies the browser autoplay policy
   if (ui.audio.checked) conn.audio.start(); else conn.audio.stop();
   conn.sendCommand({ type: 'toggle_audio', enabled: ui.audio.checked });
+  ui.stage.focus({ preventScroll: true }); // keys go to the phone again, not to the checkbox
 });
 
 for (const b of document.querySelectorAll('footer button[data-key]')) {
@@ -913,6 +962,7 @@ const params = new URLSearchParams(location.search);
 ui.host.value = params.get('host') || store.get('last/host');
 ui.port.value = params.get('port') || store.get('last/port', '8765');
 ui.fingerprint.value = params.get('fp') || store.get('fp/' + ui.host.value);
+fpTyped = !!params.get('fp');
 showFingerprintState();
 fitCanvas();
 updateButtons();
