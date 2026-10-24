@@ -48,7 +48,7 @@ jobs:
           cp android/app/build/outputs/apk/release/app-release.apk RemotePhone-${VERSION}.apk
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: apk
           path: RemotePhone-*.apk
@@ -68,7 +68,7 @@ jobs:
             run.sh pyproject.toml README.md LICENSE remotephone/
 
       - name: Upload client artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: linux-client
           path: RemotePhone-linux-*.tar.gz
@@ -90,7 +90,7 @@ jobs:
           tools/build_mac.sh
 
       - name: Upload macOS client artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: mac-client
           path: dist/RemotePhone-*.dmg
@@ -104,17 +104,17 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Download APK
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: apk
 
       - name: Download Linux client
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: linux-client
 
       - name: Download macOS client
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: mac-client
 
