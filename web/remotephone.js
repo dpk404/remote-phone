@@ -501,6 +501,7 @@ class InputMapper {
     this.canvas = canvas;
     this.send = send;
     this.press = null;
+    this.live = false; // phone takes touch down/move/up as they happen (its info says so)
     this.hAccum = 0; this.hTime = 0; this.hFired = false;
     this.vAccum = 0;
     this.lastScroll = 0;
@@ -508,7 +509,10 @@ class InputMapper {
     canvas.addEventListener('pointerdown', (e) => this.onDown(e));
     canvas.addEventListener('pointermove', (e) => this.onMove(e));
     canvas.addEventListener('pointerup', (e) => this.onUp(e));
-    canvas.addEventListener('pointercancel', () => { this.press = null; });
+    canvas.addEventListener('pointercancel', () => {
+      if (this.live && this.press && !this.press.suppressed) this.send({ type: 'touch', action: 'cancel' });
+      this.press = null;
+    });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
   }
@@ -529,6 +533,11 @@ class InputMapper {
     const p = this.toPhone(e);
     const now = performance.now();
     this.press = { x: p.x, y: p.y, lx: p.x, ly: p.y, t: now, moved: false, suppressed: now - this.lastScroll < SCROLL_COOLDOWN };
+    if (this.live && !this.press.suppressed) this.touch('down', p);
+  }
+
+  touch(action, p) {
+    this.send({ type: 'touch', action, x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 });
   }
 
   onMove(e) {
@@ -537,12 +546,18 @@ class InputMapper {
     const p = this.toPhone(e);
     if (Math.abs(p.x - s.x) > TAP_THRESHOLD || Math.abs(p.y - s.y) > TAP_THRESHOLD) s.moved = true;
     s.lx = p.x; s.ly = p.y;
+    if (this.live && !s.suppressed) this.touch('move', p);
   }
 
   onUp(e) {
     const s = this.press;
     if (!s || e.button !== 0) return;
     this.press = null;
+    if (this.live) {
+      // The finger is already down on the phone, so it always comes back up
+      if (!s.suppressed) this.touch('up', this.toPhone(e));
+      return;
+    }
     const now = performance.now();
     if (s.suppressed || now - this.lastScroll < SCROLL_COOLDOWN) return;
     const elapsed = now - s.t;
@@ -628,6 +643,11 @@ class PhoneConnection {
     this.info = null;
     this.fingerprint = '';
     this.video = pickVideoPipeline((e) => this.useMse(e));
+    // The phone sends a keyframe only about every 10 s. MSE needs them often to stay at the
+    // live edge, and a WebCodecs decoder that lost its place needs one to restart.
+    setInterval(() => {
+      if (this.video instanceof MsePipeline || this.video.needKey) this.sendCommand({ type: 'request_keyframe' });
+    }, 1000);
     this.audio = new AudioPipeline();
     this.input = new InputMapper(ui.canvas, (cmd) => this.sendCommand(cmd));
   }
@@ -696,7 +716,7 @@ class PhoneConnection {
       client: ('RemotePhone Web on ' + browserName()).slice(0, 40),
       id: this.clientId(),
       maxWidth: 1920, maxHeight: 1920, maxFps: 60,
-      videoBitrate: 8_000_000, audioBitrate: 128_000,
+      videoBitrate: 20_000_000, audioBitrate: 128_000,
     }));
   }
 
@@ -726,6 +746,7 @@ class PhoneConnection {
         this.info = msg;
         if (this.video.setScreenSize) this.video.setScreenSize(msg.screenWidth, msg.screenHeight);
         ui.audio.disabled = !msg.audioAvailable;
+        this.input.live = !!msg.liveTouch;
         if (!this.granted) setStatus('Connected to ' + (msg.device || 'phone') + ' — waiting for approval…');
         break;
       case 'approval':

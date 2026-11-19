@@ -7,6 +7,7 @@ minimal latency real-time display.
 
 import logging
 import threading
+import time
 from collections import deque
 
 import av
@@ -19,6 +20,17 @@ log = logging.getLogger("video_decoder")
 
 # Performance: drop frames when queue exceeds this depth
 _DROP_THRESHOLD = 3
+# Keyframes are rare (the phone sends one about every 10 s), so a decoder this far behind
+# asks for one rather than wait; the drop above then skips straight to it
+_KEYFRAME_REQUEST_THRESHOLD = 30
+
+# Frames are shown at the phone's capture spacing, not at their network arrival spacing.
+# This is the most a frame is held to absorb jitter, so it is also the latency it can add;
+# raise it on a jittery link, set it to 0 to paint on arrival.
+_JITTER_BUFFER = 0.015
+# Per-frame upward creep of the fastest-delivery estimate, so clock skew between phone and
+# desktop or one unusually fast frame cannot pin it forever.
+_LEAD_DRIFT = 0.0002
 
 
 class VideoDecoder(QObject):
@@ -37,6 +49,9 @@ class VideoDecoder(QObject):
         self._condition = threading.Condition()
         self._config_data = None  # SPS/PPS bytes
         self._decoded_count = 0
+        self._lead = None  # smallest (arrival time - phone timestamp) seen: the fastest delivery
+        self.request_keyframe = None  # set by the connection: asks the phone for a keyframe
+        self._keyframe_asked_at = 0.0
 
     def start(self):
         """Start the decoder thread."""
@@ -44,6 +59,7 @@ class VideoDecoder(QObject):
             return
         self._running = True
         self._decoded_count = 0
+        self._lead = None
         # Do not clear _config_data or the queue here: the server pushes the cached
         # SPS/PPS the instant the socket opens, which can beat the queued Qt
         # 'connected' signal that triggers this start(). stop() does the clearing.
@@ -76,6 +92,14 @@ class VideoDecoder(QObject):
             self._frame_queue.append((frame_type, timestamp, data))
             self._condition.notify()
 
+    def _hold(self, timestamp_ms: int, now: float) -> float:
+        """Seconds to hold a decoded frame so it leaves at the phone's capture spacing."""
+        lead = now - timestamp_ms / 1000
+        if self._lead is None or abs(lead - self._lead) > 1:
+            self._lead = lead  # new stream, a stall, or the 32-bit timestamp wrapped
+        self._lead = min(self._lead + _LEAD_DRIFT, lead)
+        return max(0.0, self._lead + _JITTER_BUFFER - lead)
+
     def _decode_loop(self):
         """Background thread: dequeue frames, decode H.264, emit QImages."""
         codec = av.CodecContext.create('h264', 'r')
@@ -106,7 +130,12 @@ class VideoDecoder(QObject):
                     if dropped > 0:
                         log.warning(f"Dropped {dropped} frames (queue was {dropped + len(self._frame_queue)})")
 
-                frame_type, _, data = self._frame_queue.popleft()
+                behind = len(self._frame_queue) > _KEYFRAME_REQUEST_THRESHOLD
+                frame_type, timestamp, data = self._frame_queue.popleft()
+
+            if behind and self.request_keyframe and time.monotonic() - self._keyframe_asked_at > 1:
+                self._keyframe_asked_at = time.monotonic()
+                self.request_keyframe()
 
             try:
                 # Config frames: just store, don't decode separately
@@ -144,6 +173,10 @@ class VideoDecoder(QObject):
                     qimg = QImage(bytes(plane), w, h, plane.line_size,
                                   QImage.Format.Format_RGB888).copy()
 
+                    hold = self._hold(timestamp, time.monotonic())
+                    # A backlog means we are already behind: catch up instead of pacing
+                    if hold and not self._frame_queue:
+                        time.sleep(hold)
                     self.frame_ready.emit(qimg)
 
             except av.error.InvalidDataError as e:

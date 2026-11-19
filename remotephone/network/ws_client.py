@@ -87,6 +87,7 @@ class WebSocketClient(QObject):
     def set_video_decoder(self, decoder):
         """Set direct decoder reference for low-latency video frame routing."""
         self._video_decoder = decoder
+        decoder.request_keyframe = lambda: self.send_command({"type": "request_keyframe"})
 
     def connect_to(self, url: str):
         """Start a background thread that connects to the WebSocket server."""
@@ -150,7 +151,7 @@ class WebSocketClient(QObject):
             "maxWidth": 1920,
             "maxHeight": 1920,
             "maxFps": 60,
-            "videoBitrate": 8_000_000,
+            "videoBitrate": 20_000_000,  # a ceiling: the phone encodes at a variable rate below it
             "audioBitrate": 128_000,
         }))
 

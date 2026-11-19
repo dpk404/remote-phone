@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import org.java_websocket.WebSocket
+import org.java_websocket.WebSocketImpl
 import org.java_websocket.handshake.ClientHandshake
 import org.java_websocket.server.WebSocketServer
 import org.json.JSONObject
@@ -25,7 +26,9 @@ class MirrorWebSocketServer(
     private val audioAvailable: Boolean,
     private val onControlCommand: (String) -> Unit,
     private val onClientsChanged: () -> Unit,
-    private val onApprovalRequest: (id: String, label: String) -> Unit
+    private val onApprovalRequest: (id: String, label: String) -> Unit,
+    private val onKeyFrameNeeded: () -> Unit,
+    private val onBitrate: (Int) -> Unit
 ) : WebSocketServer(InetSocketAddress(port)) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -35,6 +38,8 @@ class MirrorWebSocketServer(
         private const val APPROVAL_TIMEOUT_MS = 60_000L
         /** WebSocket "policy violation": the phone's owner did not allow this client. */
         const val CLOSE_REJECTED = 1008
+        /** Frames queued for one client before it counts as behind; a keyframe still draining is far below this. */
+        private const val MAX_QUEUED_FRAMES = 8
     }
 
     /** A computer waiting for the owner's answer. */
@@ -50,6 +55,7 @@ class MirrorWebSocketServer(
     private var videoConfigFrame: ByteArray? = null
     private val gop = ArrayList<ByteArray>()
     private val ready = HashMap<WebSocket, String>()  // watching connections and their identity
+    private val stale = HashSet<WebSocket>()  // fell behind and had frames skipped: no deltas until a keyframe
 
     // Consent: video and control flow only to computers the owner allowed, for the mirroring
     // session or for good when remembered. Allow hands the computer a random secret inside TLS;
@@ -75,8 +81,10 @@ class MirrorWebSocketServer(
                 mainHandler.removeCallbacks(it.value.timeout)
                 pending.remove(it.key)
             } != null
+            stale.remove(conn)
             ready.remove(conn) != null || wasPending
         }
+        RemoteAccessibilityService.liftFinger()  // it may have left mid-press
         if (changed) onClientsChanged()
         Log.i(TAG, "Client disconnected: ${conn.remoteSocketAddress} (code=$code)")
     }
@@ -106,6 +114,7 @@ class MirrorWebSocketServer(
             // Nothing else is accepted from a client the phone has not allowed
             if (synchronized(lock) { conn !in ready }) return
             when (type) {
+                "request_keyframe" -> onKeyFrameNeeded()
                 "toggle_audio" -> {
                     val enabled = json.getBoolean("enabled")
                     ScreenCaptureService.toggleAudio(enabled)
@@ -128,6 +137,7 @@ class MirrorWebSocketServer(
     }
 
     private fun hello(conn: WebSocket, json: JSONObject) {
+        conn.setAttachment(json.optInt("videoBitrate"))  // applied once the client is allowed
         conn.send(infoJson())
         Log.i(TAG, "Sent device info to client")
         // Scanner probes only identify the phone; they never ask for access
@@ -208,6 +218,7 @@ class MirrorWebSocketServer(
             }
             ready[conn] = id
         }
+        conn.getAttachment<Int?>()?.takeIf { it > 0 }?.let(onBitrate)
         onClientsChanged()
     }
 
@@ -245,6 +256,7 @@ class MirrorWebSocketServer(
         put("screenWidth", screenWidth)
         put("screenHeight", screenHeight)
         put("audioAvailable", audioAvailable)
+        put("liveTouch", Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)  // accepts "touch" down/move/up
         put("androidVersion", Build.VERSION.RELEASE)
     }.toString()
 
@@ -285,12 +297,18 @@ class MirrorWebSocketServer(
     /**
      * Broadcast a binary frame (video or audio) to every client that has had its replay,
      * keeping the current group of pictures for the next joiner.
-     * Skips delta frames for slow clients (send queue backed up) so the encoder thread never blocks.
+     * A client whose send queue backs up skips deltas, so the encoder thread never blocks. One
+     * skipped delta breaks every delta after it, so that client gets none until a keyframe,
+     * which is asked for at once.
+     * ponytail: the kept group grows with the keyframe interval (up to 10 s of frames replayed to
+     * a joiner). If joining mid-motion feels slow, skip the replay while frames are flowing and
+     * start the joiner from a requested keyframe instead.
      */
     fun broadcastFrame(frame: ByteArray) {
         if (frame.isEmpty()) return
+        val type = frame[0]
         synchronized(lock) {
-            when (frame[0]) {
+            when (type) {
                 ScreenCaptureService.FRAME_VIDEO_CONFIG -> { videoConfigFrame = frame; gop.clear() }
                 ScreenCaptureService.FRAME_VIDEO_KEY -> { gop.clear(); gop.add(frame) }
                 ScreenCaptureService.FRAME_VIDEO_DELTA -> gop.add(frame)
@@ -298,13 +316,19 @@ class MirrorWebSocketServer(
             for (conn in ready.keys) {
                 try {
                     if (!conn.isOpen) continue
-                    // Slow clients skip deltas and resync at the next keyframe
-                    if (conn.hasBufferedData() && frame[0] == ScreenCaptureService.FRAME_VIDEO_DELTA) continue
+                    if (type == ScreenCaptureService.FRAME_VIDEO_KEY) {
+                        stale.remove(conn)
+                    } else if (type == ScreenCaptureService.FRAME_VIDEO_DELTA &&
+                        (conn in stale || (conn as WebSocketImpl).outQueue.size > MAX_QUEUED_FRAMES)) {
+                        if (stale.add(conn)) Log.i(TAG, "Client ${conn.remoteSocketAddress} fell behind, skipping to the next keyframe")
+                        continue
+                    }
                     conn.send(frame)
                 } catch (e: Exception) {
                     // Client may have disconnected; onClose cleans up
                 }
             }
+            if (type == ScreenCaptureService.FRAME_VIDEO_DELTA && stale.isNotEmpty()) onKeyFrameNeeded()
         }
     }
 }

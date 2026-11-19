@@ -22,9 +22,11 @@ import android.media.MediaFormat
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import androidx.annotation.RequiresApi
@@ -47,6 +49,11 @@ class ScreenCaptureService : Service() {
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
         const val WS_PORT = 8765
+        const val FRAME_RATE = 60
+        private val SIZE_STEPS = floatArrayOf(1f, 2 / 3f, 0.5f)
+        /** Average milliseconds the encoder may hold frames before the stream size steps down. */
+        private const val MAX_ENCODER_DELAY_MS = 60
+        private const val DELAY_WINDOW = 90  // frames averaged per check
 
         // Frame type markers for the binary protocol
         const val FRAME_VIDEO_CONFIG: Byte = 0x00
@@ -112,6 +119,15 @@ class ScreenCaptureService : Service() {
     private var screenWidth = 0
     private var screenHeight = 0
     private var density = 0
+    private var bitrate = 0  // asked for by the last client allowed; 0 until one asks
+    // The stream is encoded smaller than the screen when the encoder cannot keep up at full size
+    // (see readVideoEncoder). It only ever steps down, and starts again at full size next session.
+    private var sizeStep = 0
+    private val encWidth get() = scaled(screenWidth)
+    private val encHeight get() = scaled(screenHeight)
+    private fun scaled(pixels: Int) =
+        if (sizeStep == 0) pixels else (pixels * SIZE_STEPS[sizeStep]).toInt() and (-16)  // encoders want multiples of 16
+    @Volatile private var lastKeyFrameRequest = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -202,12 +218,16 @@ class ScreenCaptureService : Service() {
             audioAvailable = audioAvailable,
             onControlCommand = { RemoteAccessibilityService.handleCommand(it) },
             onClientsChanged = { mainHandler.post(publishClients) },
-            onApprovalRequest = { id, label -> requestApproval(id, label) }
+            onApprovalRequest = { id, label -> requestApproval(id, label) },
+            onKeyFrameNeeded = { requestKeyFrame() },
+            onBitrate = { setBitrate(it) }
         )
         // Everything, video included, travels inside TLS under the phone's own certificate
         webSocketServer!!.setWebSocketFactory(DefaultSSLWebSocketServerFactory(Tls.serverContext()))
         // A quick stop and start must not fail on the previous socket still closing
         webSocketServer!!.isReuseAddr = true
+        // The library leaves Nagle on, which holds the tail of a frame back until the client ACKs
+        webSocketServer!!.isTcpNoDelay = true
         webSocketServer!!.start()
 
         isRunning = true
@@ -247,31 +267,48 @@ class ScreenCaptureService : Service() {
 
     /**
      * H.264 encoder at the current screen size, tuned for low-latency streaming.
-     * Some hardware encoders (common on LineageOS/custom ROMs) reject the profile/level or
-     * optional keys with IllegalArgumentException; those fall back to the base format.
+     * Hardware encoders reject keys they do not support with IllegalArgumentException (low
+     * latency on older Qualcomm ones, profile/level on some custom ROMs), so each attempt asks
+     * for less and only the refused key is lost.
      */
     private fun createEncoder(): MediaCodec {
-        val videoFormat = baseVideoFormat().apply {
-            // Reduce encoder output buffering for lower latency
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
-            }
-            // When screen is static, only repeat frame every 100ms instead of 33ms
-            setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 100_000) // microseconds
-            // Main profile: better compression than Baseline, no B-frames so still low latency
-            setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileMain)
-            setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel41)
-        }
         val encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-        try {
-            encoder.configure(videoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        } catch (e: IllegalArgumentException) {
-            Log.w(TAG, "Encoder config failed with optimized format, retrying with baseline", e)
-            encoder.reset()
-            encoder.configure(baseVideoFormat(), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        for (lowLatency in listOf(true, false)) {
+            try {
+                encoder.configure(tunedVideoFormat(encoder, lowLatency), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                return encoder
+            } catch (e: IllegalArgumentException) {
+                Log.w(TAG, "Encoder rejected the tuned format (low latency $lowLatency), retrying with less")
+                encoder.reset()
+            }
         }
+        encoder.configure(baseVideoFormat(), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         return encoder
     }
+
+    private fun tunedVideoFormat(encoder: MediaCodec, lowLatency: Boolean): MediaFormat =
+        baseVideoFormat().apply {
+            // Reduce encoder output buffering for lower latency
+            if (lowLatency && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+            }
+            // A 90 or 120 Hz display would feed more frames than the bitrate is budgeted for
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                setFloat(MediaFormat.KEY_MAX_FPS_TO_ENCODER, FRAME_RATE.toFloat())
+            }
+            // When screen is static, only repeat frame every 100ms
+            setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 100_000) // microseconds
+            // Main profile: better compression than Baseline, no B-frames so still low latency.
+            // A profile must come with a level, and a fixed one is too low for tall screens at
+            // 60 fps, so take the highest level this encoder offers.
+            encoder.codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).profileLevels
+                .filter { it.profile == MediaCodecInfo.CodecProfileLevel.AVCProfileMain }
+                .maxOfOrNull { it.level }
+                ?.let {
+                    setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileMain)
+                    setInteger(MediaFormat.KEY_LEVEL, it)
+                }
+        }
 
     // Services receive the device configuration, so this fires when another app rotates the
     // screen even though MainActivity is portrait-locked. Locale, font and theme changes land
@@ -297,7 +334,7 @@ class ScreenCaptureService : Service() {
             inputSurface = surface
             oldThread?.join(500)
             // Resize before attaching, so the new surface only ever sees the new projection
-            virtualDisplay?.resize(screenWidth, screenHeight, density)
+            virtualDisplay?.resize(encWidth, encHeight, density)
             virtualDisplay?.setSurface(surface)
             try {
                 old?.stop()
@@ -307,9 +344,12 @@ class ScreenCaptureService : Service() {
                 Log.e(TAG, "Error releasing old encoder", e)
             }
             // Clients learn the new size before the first frame at that size arrives
-            webSocketServer?.updateScreenSize(screenWidth, screenHeight)
+            webSocketServer?.updateScreenSize(encWidth, encHeight)
+            // Clients send positions on the picture they see; the phone works in screen pixels
+            RemoteAccessibilityService.inputScaleX = screenWidth.toFloat() / encWidth
+            RemoteAccessibilityService.inputScaleY = screenHeight.toFloat() / encHeight
             videoThread = Thread({ readVideoEncoder(encoder) }, "VideoEncoderThread").apply { start() }
-            Log.i(TAG, "Video restarted at ${screenWidth}x${screenHeight} after rotation")
+            Log.i(TAG, "Video restarted at ${encWidth}x${encHeight} for a ${screenWidth}x${screenHeight} screen")
         } catch (e: Exception) {
             Log.e(TAG, "Video restart after rotation failed", e)
         }
@@ -317,13 +357,36 @@ class ScreenCaptureService : Service() {
 
     /** The minimal H.264 format every encoder accepts; optional low-latency keys are layered on top. */
     private fun baseVideoFormat(): MediaFormat =
-        MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, screenWidth, screenHeight).apply {
+        MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, encWidth, encHeight).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_BIT_RATE, calculateBitrate(screenWidth, screenHeight))
-            setInteger(MediaFormat.KEY_FRAME_RATE, 30)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1) // keyframe every 1s for faster error recovery
-            setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+            setInteger(MediaFormat.KEY_BIT_RATE, if (bitrate > 0) bitrate else calculateBitrate(screenWidth, screenHeight))
+            setInteger(MediaFormat.KEY_FRAME_RATE, FRAME_RATE)
+            // A keyframe is many times the size of a normal frame and stalls the stream while it
+            // is sent, so they are rare; a client that needs one sooner asks (requestKeyFrame)
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 10)
         }
+
+    /** Ask the encoder for a keyframe now; at most twice a second however many clients ask. */
+    private fun requestKeyFrame() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastKeyFrameRequest < 500) return
+        lastKeyFrameRequest = now
+        setEncoderParameter(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0)
+    }
+
+    /** The bitrate a client asked for, kept across rotation. With several clients the last one wins. */
+    private fun setBitrate(bitsPerSecond: Int) {
+        bitrate = bitsPerSecond.coerceIn(1_000_000, 40_000_000)
+        setEncoderParameter(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, bitrate)
+    }
+
+    private fun setEncoderParameter(key: String, value: Int) {
+        try {
+            videoEncoder?.setParameters(Bundle().apply { putInt(key, value) })
+        } catch (e: IllegalStateException) {
+            // Mid-rotation or stopping: the next encoder starts with a keyframe and the stored bitrate
+        }
+    }
 
     private fun calculateBitrate(width: Int, height: Int): Int {
         // Adaptive bitrate: ~8 bits per pixel for high quality over WiFi
@@ -332,6 +395,9 @@ class ScreenCaptureService : Service() {
 
     private fun readVideoEncoder(encoder: MediaCodec) {
         val bufferInfo = MediaCodec.BufferInfo()
+        var delaySum = 0L
+        var delayCount = 0
+        var slowWindows = 0
 
         // Exits when capture stops or a rotation swaps in a new encoder
         while (isRunning && videoEncoder === encoder) {
@@ -346,6 +412,24 @@ class ScreenCaptureService : Service() {
                         buffer.get(data, 0, bufferInfo.size)
 
                         val timestamp = (bufferInfo.presentationTimeUs / 1000).toInt()
+
+                        // A frame's timestamp is when it was drawn, on the same clock as nanoTime, so
+                        // the difference is how long the encoder held it. An encoder that cannot
+                        // keep up at this size queues frames (over 100 ms on older phones, where a
+                        // smaller picture brings it back near 30 ms), so two slow windows in a row
+                        // step the stream size down. Absurd values mean another clock: ignored.
+                        val delay = System.nanoTime() / 1_000_000 - bufferInfo.presentationTimeUs / 1000
+                        if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0 && delay in 0..1000) {
+                            delaySum += delay
+                            if (++delayCount == DELAY_WINDOW) {
+                                slowWindows = if (delaySum / DELAY_WINDOW > MAX_ENCODER_DELAY_MS) slowWindows + 1 else 0
+                                if (slowWindows == 2 && sizeStep < SIZE_STEPS.size - 1) {
+                                    Log.i(TAG, "Encoder holds frames ${delaySum / DELAY_WINDOW} ms at ${encWidth}x${encHeight}: making the stream smaller")
+                                    mainHandler.post { if (isRunning && videoEncoder === encoder) { sizeStep++; restartVideo() } }
+                                }
+                                delaySum = 0; delayCount = 0
+                            }
+                        }
 
                         val frameType = when {
                             bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0 -> FRAME_VIDEO_CONFIG
@@ -493,6 +577,9 @@ class ScreenCaptureService : Service() {
             }.start()
         }
 
+        sizeStep = 0
+        RemoteAccessibilityService.inputScaleX = 1f
+        RemoteAccessibilityService.inputScaleY = 1f
         virtualDisplay = null
         videoEncoder = null
         inputSurface = null

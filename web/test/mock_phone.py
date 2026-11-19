@@ -73,7 +73,8 @@ async def session(ws, fp):
     hello = json.loads(await ws.recv())
     print("<-", hello, flush=True)
     await ws.send(json.dumps({"type": "info", "device": "Mock Pixel", "screenWidth": W, "screenHeight": H,
-                              "audioAvailable": True, "androidVersion": "15"}))
+                              "audioAvailable": True, "androidVersion": "15",
+                              "liveTouch": os.environ.get("MOCK_LIVE_TOUCH") != "0"}))
     cid = hello.get("id")
     if cid in approved:
         nonce = secrets.token_hex(32)

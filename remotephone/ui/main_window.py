@@ -133,7 +133,9 @@ class VideoWidget(QWidget):
             px, py = self._map_to_phone(event.position())
             if px is not None:
                 self._pressing = True
-                self.input.on_press(px, py)
+                cmd = self.input.on_press(px, py)
+                if cmd:
+                    self.send_command(cmd)
         elif event.button() == Qt.MouseButton.MiddleButton:
             # Middle-click (scroll wheel click) = Back gesture
             self.send_command(_BACK)
@@ -157,17 +159,22 @@ class VideoWidget(QWidget):
         if self._pressing:
             px, py = self._map_to_phone(event.position())
             if px is not None:
-                self.input.on_move(px, py)
+                cmd = self.input.on_move(px, py)
+                if cmd:
+                    self.send_command(cmd)
         super().mouseMoveEvent(event)
 
     def wheelEvent(self, event):
         px, py = self._map_to_phone(event.position())
         if px is not None:
             delta = event.angleDelta()
+            # How far the picture should move, in phone pixels: trackpads report it in points
+            scale = self.image.height() / self._get_display_rect()[3]
+            drag = (event.pixelDelta().y() or delta.y() / 2) * scale
             cmd = self.input.on_scroll(px, py, float(delta.x()), float(delta.y()),
-                                       event.phase())
-            if cmd:
-                self.send_command(cmd)
+                                       event.phase(), drag, self.image.height())
+            for c in cmd if isinstance(cmd, list) else [cmd] if cmd else []:
+                self.send_command(c)
         super().wheelEvent(event)
 
 
@@ -476,6 +483,7 @@ class MainWindow(QMainWindow):
 
         if info.get("audioAvailable", False):
             self.audio_checkbox.setEnabled(True)
+        self.input_handler.live = bool(info.get("liveTouch"))
 
     def _on_approval(self, state: str):
         if state == "pending":

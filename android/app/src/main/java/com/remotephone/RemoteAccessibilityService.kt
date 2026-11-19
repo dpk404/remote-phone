@@ -7,6 +7,8 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import android.view.KeyEvent
@@ -18,6 +20,8 @@ class RemoteAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "RemoteAccessibility"
+        /** Length of one live-touch segment: about one display frame, so the finger trails the pointer by that much. */
+        private const val SEGMENT_MS = 16L
         private var instance: RemoteAccessibilityService? = null
 
         /** Selection captured at copy/cut time, for clients when the clipboard is unreadable. */
@@ -26,6 +30,15 @@ class RemoteAccessibilityService : AccessibilityService() {
             private set
 
         fun isRunning(): Boolean = instance != null
+
+        /** Screen pixels per stream pixel: the stream can be smaller than the screen. */
+        @Volatile var inputScaleX = 1f
+        @Volatile var inputScaleY = 1f
+
+        /** Lift a finger a client left down (it disconnected mid-press); never wakes the screen. */
+        fun liftFinger() {
+            instance?.touch("cancel", 0f, 0f)
+        }
 
         fun handleCommand(json: String) {
             val service = instance ?: run {
@@ -38,28 +51,15 @@ class RemoteAccessibilityService : AccessibilityService() {
 
             try {
                 val cmd = JSONObject(json)
+                fun x(key: String) = cmd.getDouble(key).toFloat() * inputScaleX
+                fun y(key: String) = cmd.getDouble(key).toFloat() * inputScaleY
                 when (cmd.getString("type")) {
-                    "tap" -> service.performTap(
-                        cmd.getDouble("x").toFloat(),
-                        cmd.getDouble("y").toFloat()
-                    )
-                    "swipe" -> service.performSwipe(
-                        cmd.getDouble("x1").toFloat(),
-                        cmd.getDouble("y1").toFloat(),
-                        cmd.getDouble("x2").toFloat(),
-                        cmd.getDouble("y2").toFloat(),
-                        cmd.optLong("duration", 300)
-                    )
-                    "long_press" -> service.performLongPress(
-                        cmd.getDouble("x").toFloat(),
-                        cmd.getDouble("y").toFloat(),
-                        cmd.optLong("duration", 1000)
-                    )
-                    "scroll" -> service.performScroll(
-                        cmd.getDouble("x").toFloat(),
-                        cmd.getDouble("y").toFloat(),
-                        cmd.getDouble("dy").toFloat()
-                    )
+                    "tap" -> service.performTap(x("x"), y("y"))
+                    "swipe" -> service.performSwipe(x("x1"), y("y1"), x("x2"), y("y2"), cmd.optLong("duration", 300))
+                    "long_press" -> service.performLongPress(x("x"), y("y"), cmd.optLong("duration", 1000))
+                    "scroll" -> service.performScroll(x("x"), y("y"), cmd.getDouble("dy").toFloat())
+                    // "cancel" carries no position
+                    "touch" -> service.touch(cmd.getString("action"), if (cmd.has("x")) x("x") else 0f, if (cmd.has("y")) y("y") else 0f)
                     "key" -> service.performKey(cmd.getString("action"))
                     // Text editing prefers the real input pipeline: on Android 13+ the
                     // service holds its own InputConnection (flagInputMethodEditor), so
@@ -461,6 +461,74 @@ class RemoteAccessibilityService : AccessibilityService() {
     private fun dispatch(path: Path, durationMs: Long) {
         val stroke = GestureDescription.StrokeDescription(path, 0, durationMs)
         dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+    }
+
+    // ---- Live touch (Android 8+) ----
+    // One finger that stays down across gestures: each segment continues the previous stroke,
+    // so the phone follows the pointer while it moves instead of replaying a swipe after
+    // release. A segment has to finish before the next can continue it, so moves that arrive
+    // meanwhile collapse into one segment to the newest position. All state lives on the main
+    // thread, which is also where gesture results are delivered.
+    private val main = Handler(Looper.getMainLooper())
+    private var finger: GestureDescription.StrokeDescription? = null    // down and idle, can be continued
+    private var inFlight: GestureDescription.StrokeDescription? = null  // segment being played
+    private var atX = 0f
+    private var atY = 0f       // where the finger is: the end of the last finished segment
+    private var toX = 0f
+    private var toY = 0f       // newest position a client asked for
+    private var moved = false  // toX/toY not yet reached
+    private var lift = false   // finger must come up after reaching toX/toY
+
+    private fun touch(action: String, x: Float, y: Float) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        main.post {
+            when (action) {
+                "down" -> {
+                    // A new press replaces a finger that never came up
+                    finger = null; moved = false; lift = false
+                    atX = x; atY = y; toX = x; toY = y
+                    playSegment(Path().apply { moveTo(x, y) }, null, willContinue = true)
+                }
+                "move" -> { toX = x; toY = y; moved = true; continueFinger() }
+                "up" -> { toX = x; toY = y; moved = true; lift = true; continueFinger() }
+                "cancel" -> { lift = true; continueFinger() }
+            }
+        }
+    }
+
+    /** Play whatever is pending (a move, a lift or both) as the next segment, if the finger is idle. */
+    private fun continueFinger() {
+        val from = finger ?: return  // not down, or a segment is in flight and will call back here
+        if (!moved && !lift) return
+        val path = Path().apply { moveTo(atX, atY); if (moved) lineTo(toX, toY) }
+        playSegment(path, from, willContinue = !lift)
+    }
+
+    private fun playSegment(path: Path, from: GestureDescription.StrokeDescription?, willContinue: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val endX = toX
+        val endY = toY
+        finger = null; moved = false; lift = false
+        val stroke = try {
+            from?.continueStroke(path, 0, SEGMENT_MS, willContinue)
+                ?: GestureDescription.StrokeDescription(path, 0, SEGMENT_MS, willContinue)
+        } catch (e: IllegalArgumentException) {
+            return  // coordinates outside the screen: drop the finger
+        }
+        inFlight = stroke
+        val accepted = dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), object : GestureResultCallback() {
+            override fun onCompleted(gesture: GestureDescription) {
+                if (inFlight !== stroke) return  // a newer press took over
+                inFlight = null
+                atX = endX; atY = endY
+                if (willContinue) { finger = stroke; continueFinger() }
+            }
+
+            override fun onCancelled(gesture: GestureDescription) {
+                if (inFlight === stroke) inFlight = null
+            }
+        }, null)
+        if (!accepted) inFlight = null
     }
 
     private fun performTap(x: Float, y: Float) =

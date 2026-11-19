@@ -3,7 +3,8 @@ RemotePhone — Input Handler
 Translates mouse and keyboard events from the Linux client into
 the JSON control protocol for the Android phone.
 
-Gesture detection:
+When the phone supports live touch (Android 8+), a press, drag and release are sent
+as they happen and the phone follows the pointer. Otherwise gestures are detected here:
   - Click (< 10px movement, < 250ms) → tap
   - Click + drag → swipe
   - Long click (> 500ms, no movement) → long_press
@@ -32,6 +33,8 @@ class InputHandler:
     VSCROLL_GAIN = 2.5       # scroll speed: phone swipe distance per unit of wheel/trackpad travel
 
     SCROLL_COOLDOWN = 0.4    # seconds to ignore clicks after scroll (trackpad ghost taps)
+    TRACKPAD_GAIN = 1.0      # live touch: 1.0 moves the picture exactly as far as the trackpad reports
+    SCROLL_PRESS_TRAVEL = 48.0  # live touch: phone pixels a scroll must cover before the finger goes down
 
     # System keys → phone key actions
     KEY_ACTIONS = {
@@ -70,13 +73,21 @@ class InputHandler:
         self._hscroll_fired = False # back already sent for the current horizontal gesture
         self._last_scroll_time = 0.0  # tracks last scroll to suppress ghost taps
         self._suppressed = False      # whether current press was suppressed
+        self.live = False             # phone takes touch down/move/up as they happen (its info says so)
+        self._scroll_x = 0.0          # live touch: the finger a trackpad scroll is dragging,
+        self._scroll_y = None         # None while it is up
+        self._scroll_pending = 0.0    # scroll travel collected before the finger goes down
 
     def reset(self):
         """Clear all in-progress gesture and scroll state (call on disconnect)."""
         self.__init__()
 
-    def on_press(self, x: float, y: float):
-        """Record the start of a mouse press."""
+    @staticmethod
+    def _touch(action: str, x: float, y: float) -> dict:
+        return {"type": "touch", "action": action, "x": round(x, 1), "y": round(y, 1)}
+
+    def on_press(self, x: float, y: float) -> dict | None:
+        """Record the start of a mouse press. Returns the touch-down command in live mode."""
         self._press_x = x
         self._press_y = y
         self._last_x = x
@@ -85,15 +96,21 @@ class InputHandler:
         self._moved = False
         # Suppress ghost taps right after scrolling (trackpad artifact)
         self._suppressed = self._press_time - self._last_scroll_time < self.SCROLL_COOLDOWN
+        if self.live and not self._suppressed:
+            return self._touch("down", x, y)
+        return None
 
-    def on_move(self, x: float, y: float):
-        """Track mouse movement during a drag."""
+    def on_move(self, x: float, y: float) -> dict | None:
+        """Track mouse movement during a drag. Returns the touch-move command in live mode."""
         dx = abs(x - self._press_x)
         dy = abs(y - self._press_y)
         if dx > self.TAP_THRESHOLD or dy > self.TAP_THRESHOLD:
             self._moved = True
         self._last_x = x
         self._last_y = y
+        if self.live and not self._suppressed:
+            return self._touch("move", x, y)
+        return None
 
     def on_release(self, x: float, y: float) -> dict | None:
         """
@@ -104,6 +121,12 @@ class InputHandler:
         if self._suppressed:
             self._suppressed = False
             return None
+
+        if self.live:
+            # The finger is already down on the phone, so it always comes back up
+            if x < 0 or y < 0:
+                x, y = self._last_x, self._last_y
+            return self._touch("up", x, y)
 
         # Also suppress if a scroll happened between press and release
         now = time.time()
@@ -144,14 +167,56 @@ class InputHandler:
                 "y": round(self._press_y, 1),
             }
 
+    def _lift_scroll_finger(self) -> dict:
+        cmd = self._touch("up", self._scroll_x, self._scroll_y)
+        self._scroll_y = None
+        self._scroll_pending = 0.0
+        return cmd
+
     def on_scroll(self, x: float, y: float, dx: float, dy: float,
-                  phase=Qt.ScrollPhase.NoScrollPhase) -> dict | None:
+                  phase=Qt.ScrollPhase.NoScrollPhase, drag: float = 0.0,
+                  height: float = 0.0) -> dict | list | None:
         """
         Convert scroll wheel into a scroll or back gesture.
         - Vertical scroll (dy) → normal page scroll
         - Horizontal scroll (dx from 2-finger trackpad swipe) → back gesture
+
+        On a live-touch phone a trackpad scroll (one that reports phases) instead drags a finger:
+        drag is how far the picture should move for this event, in phone pixels, and height is
+        the phone screen height. The phone then scrolls with the fingers and flings on release.
+        Starting that drag returns two commands (press, then move) as a list.
         """
         now = time.time()
+
+        if self.live and height and phase != Qt.ScrollPhase.NoScrollPhase:
+            down = self._scroll_y is not None
+            if phase in (Qt.ScrollPhase.ScrollBegin, Qt.ScrollPhase.ScrollEnd):
+                self._scroll_pending = 0.0
+                if down:
+                    return self._lift_scroll_finger()
+            elif phase == Qt.ScrollPhase.ScrollMomentum and abs(dy) >= abs(dx):
+                self._last_scroll_time = now
+                return None  # the phone flings by itself once the finger is up
+            elif down or (abs(dy) >= abs(dx) and abs(dy) >= 1):
+                self._last_scroll_time = now
+                if not down:
+                    # Android reads a press that barely moves as a tap. So the finger goes down
+                    # only once the scroll has travelled further than a tap can, and it moves
+                    # that distance at once: a scroll too short for that does nothing at all.
+                    self._scroll_pending += drag * self.TRACKPAD_GAIN
+                    if abs(self._scroll_pending) < self.SCROLL_PRESS_TRAVEL:
+                        return None
+                    # Start away from the screen edges so the finger has room to travel
+                    start = min(max(y, 0.25 * height), 0.75 * height)
+                    self._scroll_x = x
+                    self._scroll_y = min(max(start + self._scroll_pending, 0.05 * height), 0.95 * height)
+                    self._scroll_pending = 0.0
+                    return [self._touch("down", x, start), self._touch("move", x, self._scroll_y)]
+                new_y = self._scroll_y + drag * self.TRACKPAD_GAIN
+                if not 0.05 * height <= new_y <= 0.95 * height:
+                    return self._lift_scroll_finger()  # out of screen: the next event presses again
+                self._scroll_y = new_y
+                return self._touch("move", self._scroll_x, new_y)
 
         # Trackpads report phases: fingers touching down starts a new gesture,
         # even mid-momentum-tail, so a second quick swipe is never swallowed
