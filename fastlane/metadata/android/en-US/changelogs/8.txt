@@ -1,0 +1,6 @@
+- Smoother mirroring at 60 fps, with drags and scrolls that follow your hand
+- Redesigned app, with an About section in Settings
+- "Mirror audio too" and the computer's audio button now follow each other
+- Typing into password fields of ordinary apps
+- The computer shows when remote control is off on the phone
+- Fixes for stopping, reconnecting and the picture on slower phones
