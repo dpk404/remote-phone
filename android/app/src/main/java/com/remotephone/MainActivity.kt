@@ -41,6 +41,8 @@ class MainActivity : ComponentActivity() {
 
     private var isStreaming = false
     private var setupDone = true
+    // The service starts asynchronously, so the first onResume after consent cannot see it yet
+    private var starting = false
 
     // Redraws the watchers so their "time connected" keeps up while the screen is open
     private val tick = Runnable { ScreenCaptureService.watchers()?.let(::showStreaming) }
@@ -83,8 +85,10 @@ class MainActivity : ComponentActivity() {
             if (!isStreaming) requestScreenCapture() else stopScreenCapture()
         }
 
+        // On while idle means "start with audio"; while mirroring it shows the real state
         audioToggle.setOnCheckedChangeListener { _, isChecked ->
             ScreenCaptureService.toggleAudio(isChecked)
+            if (isStreaming) audioToggle.isChecked = ScreenCaptureService.audioEnabled()
         }
         // Audio only available on Android 10+
         audioToggle.isEnabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
@@ -124,19 +128,26 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        updateAccessibilityStatus()
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) updateKeyboardStatus()
+        updateSetupStatus()
+        RemoteAccessibilityService.onStateChanged = ::updateSetupStatus
         val ip = getDeviceIpAddress()
         ipText.text = ip
         addressText.text = Html.fromHtml("$ip<font color=\"#9CA3AF\">:${ScreenCaptureService.WS_PORT}</font>", Html.FROM_HTML_MODE_LEGACY)
-        ScreenCaptureService.onClientsChanged = ::showStreaming
-        ScreenCaptureService.watchers()?.let(::showStreaming) ?: showIdle()
+        ScreenCaptureService.onClientsChanged = ::showState
+        ScreenCaptureService.watchers().let { if (it != null || !starting) showState(it) }
     }
 
     override fun onPause() {
+        starting = false
         ScreenCaptureService.onClientsChanged = null
+        RemoteAccessibilityService.onStateChanged = null
         watchersList.removeCallbacks(tick)
         super.onPause()
+    }
+
+    /** Null watchers means not mirroring. */
+    private fun showState(watchers: List<MirrorWebSocketServer.Watcher>?) {
+        watchers?.let(::showStreaming) ?: showIdle()
     }
 
     /** Streaming state with who is watching, so a silent viewer on the network is never invisible. */
@@ -172,6 +183,7 @@ class MainActivity : ComponentActivity() {
         findViewById<View>(R.id.connectCard).visibility = if (n == 0) View.VISIBLE else View.GONE
         findViewById<View>(R.id.addressCard).visibility = if (n == 0) View.GONE else View.VISIBLE
         findViewById<View>(R.id.setupCard).visibility = if (setupDone) View.GONE else View.VISIBLE
+        audioToggle.isChecked = ScreenCaptureService.audioEnabled()
         showAudioSubtext()
         showRequest()
 
@@ -180,6 +192,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showIdle() {
+        if (isStreaming) audioToggle.isChecked = false  // audio ended with the session
         isStreaming = false
         statusText.text = "Not mirroring"
         statusText.setTextColor(getColor(R.color.text_muted))
@@ -223,7 +236,10 @@ class MainActivity : ComponentActivity() {
         if (request == null) return
         val name = MirrorWebSocketServer.displayName(request.name).ifBlank { request.address }
         findViewById<TextView>(R.id.requestTitle).text = "$name wants to connect"
-        findViewById<TextView>(R.id.requestAddress).text = "${request.address} \u00B7 first time on this phone"
+        findViewById<TextView>(R.id.requestAddress).apply {
+            text = request.address
+            visibility = if (name == request.address) View.GONE else View.VISIBLE
+        }
         findViewById<View>(R.id.allowButton).setOnClickListener { ScreenCaptureService.answer(request.id, true) }
         findViewById<View>(R.id.denyButton).setOnClickListener { ScreenCaptureService.answer(request.id, false) }
     }
@@ -238,6 +254,7 @@ class MainActivity : ComponentActivity() {
             action = ScreenCaptureService.ACTION_START
             putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, resultCode)
             putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, data)
+            putExtra(ScreenCaptureService.EXTRA_AUDIO, audioToggle.isChecked)
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -246,6 +263,7 @@ class MainActivity : ComponentActivity() {
             startService(intent)
         }
 
+        starting = true
         showStreaming(emptyList())
     }
 
@@ -270,6 +288,12 @@ class MainActivity : ComponentActivity() {
             setCompoundDrawablesRelativeWithIntrinsicBounds(if (ok) R.drawable.ic_check else 0, 0, 0, 0)
             text = label
         }
+    }
+
+    private fun updateSetupStatus() {
+        updateAccessibilityStatus()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) updateKeyboardStatus()
+        if (isStreaming) findViewById<View>(R.id.setupCard).visibility = if (setupDone) View.GONE else View.VISIBLE
     }
 
     private fun updateAccessibilityStatus() {

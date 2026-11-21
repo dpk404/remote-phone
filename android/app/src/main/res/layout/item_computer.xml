@@ -32,12 +32,11 @@
             android:id="@+id/detail"
             style="@style/Body"
             android:layout_marginTop="2dp"
-            android:textSize="12sp"
-            android:singleLine="true"
-            android:ellipsize="end" />
+            android:textSize="12sp" />
     </LinearLayout>
 
     <Button
         android:id="@+id/action"
-        style="@style/RowAction" />
+        style="@style/RowAction"
+        android:paddingStart="4dp" />
 </LinearLayout>

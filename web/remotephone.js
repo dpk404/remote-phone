@@ -446,7 +446,7 @@ class AudioPipeline {
     if (this.ctx) return;
     const Ctx = window.AudioContext || window.webkitAudioContext;
     this.ctx = new Ctx({ sampleRate: 44100, latencyHint: 'interactive' });
-    this.ctx.resume();
+    this.ctx.resume().catch(() => {});  // rejects if stop() closes a context the browser kept suspended
     this.playhead = 0;
   }
 
@@ -784,6 +784,20 @@ class PhoneConnection {
           () => setStatus('Copied to clipboard (' + msg.content.length + ' chars)', 'ok'),
           () => { setStatus('Browser refused clipboard access', 'err'); prompt('Phone clipboard (copy it from here):', msg.content); });
         break;
+      case 'audio': {
+        // The phone's own switch, whichever side flipped it; an echo of our own toggle changes nothing
+        const on = msg.enabled === true;
+        if (on === ui.audio.checked) break;
+        ui.audio.checked = on;
+        if (!on) { this.audio.stop(); break; }
+        this.audio.start();
+        // Outside a click the browser may keep the context suspended: show audio as off so a click starts it
+        const ctx = this.audio.ctx;
+        setTimeout(() => {
+          if (ctx === this.audio.ctx && ctx.state !== 'running') { this.audio.stop(); ui.audio.checked = false; }
+        }, 1000);
+        break;
+      }
       case 'error':
         setStatus(msg.message || 'Unknown error', 'err');
         break;

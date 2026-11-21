@@ -31,6 +31,9 @@ class RemoteAccessibilityService : AccessibilityService() {
 
         fun isRunning(): Boolean = instance != null
 
+        /** Set by the activity while visible; called on the main thread when the service connects or goes away. */
+        @Volatile var onStateChanged: (() -> Unit)? = null
+
         /** Screen pixels per stream pixel: the stream can be smaller than the screen. */
         @Volatile var inputScaleX = 1f
         @Volatile var inputScaleY = 1f
@@ -68,9 +71,8 @@ class RemoteAccessibilityService : AccessibilityService() {
                     // accessibility node actions below are the last resort.
                     "text" -> {
                         val content = cmd.getString("content")
-                        // PIN/password fields (incl. the lock screen) are button grids,
-                        // not text editors: only clicking the on-screen pad works, so
-                        // skip the input-connection paths for them.
+                        // PIN/password fields: the lock screen pad takes button clicks, so
+                        // those come first; performTextInput falls back to the keyboard.
                         if (service.isPasswordFieldFocused()) service.performTextInput(content)
                         else if (!service.imeCommit(content) &&
                             !RemoteInputMethodService.typeText(content)) service.performTextInput(content)
@@ -113,11 +115,13 @@ class RemoteAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        onStateChanged?.invoke()
         Log.i(TAG, "Accessibility service connected — remote control ready")
     }
 
     override fun onDestroy() {
         instance = null
+        onStateChanged?.invoke()
         Log.i(TAG, "Accessibility service destroyed")
         super.onDestroy()
     }
@@ -228,40 +232,42 @@ class RemoteAccessibilityService : AccessibilityService() {
      * Used for PIN pad and on-screen keyboard interaction.
      */
     private fun clickButtonByLabel(label: String): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val nodes = root.findAccessibilityNodeInfosByText(label)
-        for (node in nodes) {
-            val nodeText = node.text?.toString()?.trim() ?: ""
-            val nodeDesc = node.contentDescription?.toString()?.trim() ?: ""
-            // Match exact label (avoid "10" matching "1")
-            if (nodeText == label || nodeDesc == label) {
-                if (node.isClickable) {
-                    node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    Log.d(TAG, "Clicked button '$label'")
+        for (node in labelledNodes(label)) {
+            if (node.isClickable) {
+                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                Log.d(TAG, "Clicked button '$label'")
+                return true
+            }
+            // If node itself isn't clickable, try its parent
+            var parent = node.parent
+            while (parent != null) {
+                if (parent.isClickable) {
+                    parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    Log.d(TAG, "Clicked parent of '$label'")
                     return true
                 }
-                // If node itself isn't clickable, try its parent
-                var parent = node.parent
-                while (parent != null) {
-                    if (parent.isClickable) {
-                        parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        Log.d(TAG, "Clicked parent of '$label'")
-                        return true
-                    }
-                    parent = parent.parent
-                }
-                // Fallback: tap the center of the node's bounds
-                val rect = Rect()
-                node.getBoundsInScreen(rect)
-                if (rect.width() > 0 && rect.height() > 0) {
-                    performTap(rect.centerX().toFloat(), rect.centerY().toFloat())
-                    Log.d(TAG, "Tapped center of '$label' at (${rect.centerX()}, ${rect.centerY()})")
-                    return true
-                }
+                parent = parent.parent
+            }
+            // Fallback: tap the center of the node's bounds
+            val rect = Rect()
+            node.getBoundsInScreen(rect)
+            if (rect.width() > 0 && rect.height() > 0) {
+                performTap(rect.centerX().toFloat(), rect.centerY().toFloat())
+                Log.d(TAG, "Tapped center of '$label' at (${rect.centerX()}, ${rect.centerY()})")
+                return true
             }
         }
         return false
     }
+
+    /** Nodes labelled exactly [label] in text or description (so "10" does not match "1"). */
+    private fun labelledNodes(label: String): List<AccessibilityNodeInfo> =
+        rootInActiveWindow?.findAccessibilityNodeInfosByText(label)?.filter {
+            it.text?.toString()?.trim() == label || it.contentDescription?.toString()?.trim() == label
+        } ?: emptyList()
+
+    /** A numeric pad (the lock screen) always has a 0 key; an app's password field has none. */
+    private fun hasPinPad() = labelledNodes("0").isNotEmpty()
 
     private fun findEditableNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         if (node.isFocused && node.isEditable) return node
@@ -323,15 +329,17 @@ class RemoteAccessibilityService : AccessibilityService() {
         // For password/PIN fields: click the on-screen buttons
         if (isPasswordFieldFocused()) {
             if (content == "\n") {
-                // Enter/confirm on PIN pad — try common labels
-                if (!clickButtonByLabel("OK") &&
+                // Enter/confirm on a PIN pad: try common labels. Elsewhere the search
+                // would tap text like "Enter the SSID", so go straight to the keyboard.
+                val pad = hasPinPad()
+                if (!pad || !clickButtonByLabel("OK") &&
                     !clickButtonByLabel("Done") &&
                     !clickButtonByLabel("Enter") &&
                     !clickButtonByLabel("Confirm") &&
                     !clickButtonByLabel("✓") &&
                     !clickButtonByLabel("ENTER")) {
                     // Last resort: find any node with "enter"/"ok"/"confirm" in description
-                    val root = rootInActiveWindow
+                    val root = if (pad) rootInActiveWindow else null
                     if (root != null) {
                         for (keyword in listOf("enter", "ok", "confirm", "done", "check")) {
                             val nodes = root.findAccessibilityNodeInfosByText(keyword)
@@ -346,10 +354,14 @@ class RemoteAccessibilityService : AccessibilityService() {
                             }
                         }
                     }
+                    if (!imeCommit(content)) RemoteInputMethodService.typeText(content)
                 }
             } else {
+                // No on-screen key means an app's password field, typed through the keyboard;
+                // ACTION_SET_TEXT is never used here, as the node's text is masked
                 for (ch in content) {
-                    clickButtonByLabel(ch.toString())
+                    val s = ch.toString()
+                    if (!clickButtonByLabel(s) && !imeCommit(s)) RemoteInputMethodService.typeText(s)
                 }
             }
             return
@@ -384,12 +396,13 @@ class RemoteAccessibilityService : AccessibilityService() {
     private fun performBackspace() {
         // For password/PIN fields: click the on-screen delete/backspace button
         if (isPasswordFieldFocused()) {
-            // Try common labels for the delete button on PIN pads
-            if (!clickButtonByLabel("Delete") &&
+            // Try common labels for the delete button on PIN pads; elsewhere use the keyboard
+            val pad = hasPinPad()
+            if (!pad || !clickButtonByLabel("Delete") &&
                 !clickButtonByLabel("delete") &&
                 !clickButtonByLabel("Backspace")) {
                 // Fallback: find a node with delete content description
-                val root = rootInActiveWindow
+                val root = if (pad) rootInActiveWindow else null
                 if (root != null) {
                     val nodes = root.findAccessibilityNodeInfosByText("delete")
                     for (node in nodes) {
@@ -401,6 +414,7 @@ class RemoteAccessibilityService : AccessibilityService() {
                         }
                     }
                 }
+                if (!imeKey(KeyEvent.KEYCODE_DEL)) RemoteInputMethodService.backspace()
             }
             return
         }

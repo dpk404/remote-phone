@@ -38,6 +38,11 @@ _TYPE_NAMES = {FRAME_VIDEO_CONFIG: "CONFIG", FRAME_VIDEO_KEY: "KEY", FRAME_VIDEO
 # the certificate we connected to, so a relay presenting its own certificate is denied.
 SSL_OPT = {"cert_reqs": ssl.CERT_NONE, "check_hostname": False}
 
+# WebSocketApp has no connect timeout of its own: it applies this default to the TCP connect, TLS handshake
+# and upgrade, so a stalled handshake fails into the reconnect loop. _on_open clears it for the session.
+CONNECT_TIMEOUT = 10
+websocket.setdefaulttimeout(CONNECT_TIMEOUT)
+
 
 def _phone_key(fingerprint: str, item: str) -> str:
     return f"phones/{fingerprint}/{item}"
@@ -64,12 +69,13 @@ class WebSocketClient(QObject):
 
     # Signals (emitted from background thread, received on main thread)
     connected = pyqtSignal()
-    disconnected = pyqtSignal(bool)  # True = server stopped cleanly (no auto-reconnect)
+    disconnected = pyqtSignal(bool, str)  # clean (no auto-reconnect), the phone's close reason
     reconnecting = pyqtSignal(int)   # attempt number
     frame_received = pyqtSignal(int, int, bytes)  # frame_type, timestamp, payload (audio only)
     info_received = pyqtSignal(dict)
     approval_changed = pyqtSignal(str)  # "pending" while the phone's owner decides, then "granted"
     clipboard_received = pyqtSignal(str)
+    audio_state_changed = pyqtSignal(bool)  # the phone's audio switch, whichever side flipped it
     error_occurred = pyqtSignal(str)
 
     def __init__(self, parent=None):
@@ -81,7 +87,7 @@ class WebSocketClient(QObject):
         self._frame_count = 0
         self._video_decoder = None
         self._stop_event = threading.Event()  # set once the user no longer wants to stay connected
-        self._local_close = False  # True when WE initiated the disconnect
+        self._close_frame = (None, None)  # (code, reason) of a close frame that arrived through on_error
         self._fingerprint = ""  # SHA-256 of the certificate of the phone we are connected to
 
     def set_video_decoder(self, decoder):
@@ -107,7 +113,7 @@ class WebSocketClient(QObject):
         attempt = 0
         delay = _RECONNECT_BASE
 
-        while not self._stop_event.is_set():
+        while not self._stop_event.is_set() and not self._stale():
             try:
                 self._ws = websocket.WebSocketApp(
                     self._url,
@@ -126,7 +132,7 @@ class WebSocketClient(QObject):
                 log.error(f"WebSocket run error: {e}")
 
             # If we get here, connection closed or failed
-            if self._stop_event.is_set():
+            if self._stop_event.is_set() or self._stale():
                 break
 
             attempt += 1
@@ -139,8 +145,13 @@ class WebSocketClient(QObject):
 
             delay = min(delay * _RECONNECT_FACTOR, _RECONNECT_MAX)
 
+    def _stale(self) -> bool:
+        # an attempt cancelled mid-handshake cannot be interrupted, so it may return after a newer connect_to
+        return self._thread is not None and threading.current_thread() is not self._thread
+
     def _on_open(self, ws):
         log.info(f"Connected to {self._url}")
+        ws.sock.settimeout(None)  # an established stream may sit idle between pings
         self.connected.emit()
         self._fingerprint = hashlib.sha256(ws.sock.sock.getpeercert(binary_form=True)).hexdigest().upper()
         ws.send(json.dumps({
@@ -210,12 +221,22 @@ class WebSocketClient(QObject):
                 self.send_command({"type": "auth", "mac": mac})
             elif msg_type == "clipboard":
                 self.clipboard_received.emit(obj.get("content", ""))
+            elif msg_type == "audio":
+                self.audio_state_changed.emit(obj.get("enabled") is True)
             elif msg_type == "error":
                 self.error_occurred.emit(obj.get("message", "Unknown error"))
         except json.JSONDecodeError:
             pass
 
     def _on_error(self, ws, error):
+        if self._stale():
+            return
+        # websocket-client 1.9 hands the server's close frame to on_error and then calls on_close(None, None)
+        if isinstance(error, websocket.ABNF) and error.opcode == websocket.ABNF.OPCODE_CLOSE:
+            if len(error.data) >= 2:
+                self._close_frame = (struct.unpack("!H", error.data[:2])[0],
+                                     error.data[2:].decode("utf-8", errors="replace"))
+            return
         err_str = str(error)
         # Don't spam "Connection refused" during reconnect attempts
         if "Connection refused" in err_str and not self._stop_event.is_set():
@@ -225,17 +246,24 @@ class WebSocketClient(QObject):
             self.error_occurred.emit(err_str)
 
     def _on_close(self, ws, close_status_code, close_msg):
+        if self._stale():
+            return
+        if close_status_code is None:
+            close_status_code, close_msg = self._close_frame
+        self._close_frame = (None, None)
         log.info(f"Disconnected (code={close_status_code}, msg={close_msg})")
-        # Clean if the server stopped on purpose (1000), the phone's owner rejected us
-        # (1008, policy violation), or we initiated the close: none is worth a reconnect loop
+        # Clean if the server stopped on purpose (1000, or 1001 from released 2.x apps on Stop mirroring),
+        # the phone's owner rejected us (1008, policy violation), or we initiated the close:
+        # none is worth a reconnect loop
+        if close_status_code == 1001 and not close_msg:
+            close_msg = "Mirroring stopped on the phone"
         rejected = close_status_code == 1008
-        clean = close_status_code == 1000 or rejected or self._local_close
-        self._local_close = False
+        clean = close_status_code in (1000, 1001) or rejected or self._stop_event.is_set()
         if clean:
             self._stop_event.set()
         with self._lock:
             self._ws = None
-        self.disconnected.emit(clean)
+        self.disconnected.emit(clean, close_msg or "")
         if rejected:
             self.error_occurred.emit(close_msg or "Rejected on the phone")
 
@@ -251,7 +279,6 @@ class WebSocketClient(QObject):
     def disconnect(self):
         """Cleanly close the WebSocket connection and stop reconnect loop."""
         self._stop_event.set()
-        self._local_close = True
         with self._lock:
             if self._ws:
                 try:

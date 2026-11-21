@@ -13,7 +13,6 @@
     <color name="text_primary">#FFF3F4F6</color>
     <color name="text_secondary">#FFD1D5DB</color>
     <color name="text_muted">#FF9CA3AF</color>
-    <color name="text_hint">#FF6B7280</color>
     <color name="dot_idle">#FF4B5563</color>
     <color name="status_green">#FF10B981</color>
     <color name="green_soft">#2910B981</color>

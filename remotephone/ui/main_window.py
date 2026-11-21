@@ -48,6 +48,7 @@ def _icon(name: str) -> QIcon:
 def _label(text: str = "", name: str = "") -> QLabel:
     label = QLabel(text)
     label.setObjectName(name)
+    label.setTextFormat(Qt.TextFormat.PlainText)  # device names come from the network
     return label
 
 
@@ -93,9 +94,9 @@ def _button(text: str, name: str, height: int = 0) -> QPushButton:
     return btn
 
 
-def _scroll_page(content: QWidget, max_width: int = 480) -> QScrollArea:
-    """Centres content at most max_width wide; scrolls instead of setting a window minimum height."""
-    content.setMaximumWidth(max_width)
+def _scroll_page(content: QWidget) -> QScrollArea:
+    """Centres content at most 480 px wide; scrolls instead of setting a window minimum height."""
+    content.setMaximumWidth(480)
     page, row = _frame("page", QHBoxLayout)
     row.addWidget(content)
     scroll = QScrollArea()
@@ -110,7 +111,7 @@ def _scroll_page(content: QWidget, max_width: int = 480) -> QScrollArea:
 # gesture and key handling in input_handler.py.
 SHORTCUTS = [
     ("Left click", "Tap"),
-    ("Click + drag", "Swipe"),
+    ("Click + drag", "Drag (swipe on Android 7 and older)"),
     ("Hold click (>0.5s)", "Long press"),
     ("Scroll wheel / two fingers", "Scroll"),
     ("Two-finger swipe right", "Back"),
@@ -120,13 +121,14 @@ SHORTCUTS = [
     ("F2", "Recent apps"),
     ("F5", "Notifications"),
     ("F6", "Quick Settings"),
-    ("F10", "Lock screen"),
+    ("F10", "Lock screen (Android 9+)"),
     ("F11", "Fullscreen toggle"),
     ("Type", "Text into the focused field"),
     ("Backspace", "Delete (or Back if no field)"),
     ("Delete", "Delete forward"),
     ("Enter", "Confirm / submit"),
     ("Ctrl+A / C / X / V", "Select all / Copy / Cut / Paste"),
+    ("macOS", "Cmd in place of Ctrl"),
 ]
 SHORTCUTS_TOOLTIP = "\n".join(f"{k}\u2003{a}" for k, a in SHORTCUTS)
 
@@ -356,6 +358,7 @@ class MainWindow(QMainWindow):
         self.port_input = QLineEdit("8765")
         self.port_input.setPlaceholderText("8765")
         self.port_input.setFixedWidth(92)
+        self.port_input.setValidator(QIntValidator(1, 65535))
         for caption, edit in (("IP address", self.ip_input), ("Port", self.port_input)):
             field = QVBoxLayout()
             field.setSpacing(6)
@@ -416,6 +419,7 @@ class MainWindow(QMainWindow):
 
         footer, row = _frame("footer", QHBoxLayout, (28, 12, 28, 12), 12)
         self.status_label = _label("", "small")
+        self.status_label.setTextFormat(Qt.TextFormat.RichText)
         self._set_status("Ready")
         self.update_btn = _button("Update available", "pill", 24)
         self.update_btn.setIcon(_icon("download"))
@@ -453,6 +457,7 @@ class MainWindow(QMainWindow):
         back = _tool("back", "Back to connect")
         back.clicked.connect(self._disconnect)
         self.wait_pill = _label(f"<span style='color:{AMBER}'>●</span>&nbsp;Waiting", "waitPill")
+        self.wait_pill.setTextFormat(Qt.TextFormat.RichText)
         self.wait_pill.setFixedHeight(28)
         col.addWidget(self._device_header(back, self.wait_pill, "wait_name", "wait_addr"))
 
@@ -524,6 +529,7 @@ class MainWindow(QMainWindow):
         logo = QLabel()
         logo.setPixmap(_icon("logo").pixmap(22, 22))
         self.live_pill = _label("", "livePill")
+        self.live_pill.setTextFormat(Qt.TextFormat.RichText)
         self.live_pill.setFixedHeight(26)
         bar = self._device_header(logo, self.live_pill, "mirror_name", "mirror_addr")
         row = bar.layout()
@@ -588,6 +594,7 @@ class MainWindow(QMainWindow):
         self.ws_client.info_received.connect(self._on_info_received)
         self.ws_client.approval_changed.connect(self._on_approval)
         self.ws_client.clipboard_received.connect(self._on_clipboard_received)
+        self.ws_client.audio_state_changed.connect(self._on_audio_state)
         self.ws_client.error_occurred.connect(self._on_error)
 
         # Give decoder a direct reference so WS thread can feed frames
@@ -713,8 +720,12 @@ class MainWindow(QMainWindow):
             return
         self._connect(ip)
 
+    def _port(self) -> int:
+        # the validator still lets through "0", "99999" and half-typed values
+        return int(self.port_input.text()) if self.port_input.hasAcceptableInput() else 8765
+
     def _connect(self, ip: str, name: str = ""):
-        port = self.port_input.text().strip() or "8765"
+        port = self._port()
         self.ip_input.setText(ip)
         self._set_device(name or ip, f"{ip} · {port}")
         self._connecting = True
@@ -729,28 +740,31 @@ class MainWindow(QMainWindow):
     def _on_connected(self):
         self.connected = True
         QSettings().setValue("last_ip", self.ip_input.text().strip())
+        self.frame_count = 0
         self._set_status("Connected, waiting for the phone...", AMBER)
         self.decoder.start()
 
-    def _on_disconnected(self, clean: bool = False):
+    def _on_disconnected(self, clean: bool = False, reason: str = ""):
         was_connected = self.connected
         self.connected = False
+        self.frame_count = 0
         self.decoder.stop()
         self.audio_player.stop()
         self.input_handler.reset()
         self.video_widget._pressing = False
+        self.audio_btn.setChecked(False)  # the phone sends its audio state again once we are back
         if not clean:  # the client keeps retrying
+            self.stats_label.setText(self._resolution)
             if was_connected:
                 self._set_status("Connection lost, reconnecting...", AMBER)
                 self._set_pill(f"<span style='color:{AMBER}'>●</span>&nbsp;Reconnecting", True)
             return
         self._connecting = False
         self.connect_btn.setText("Connect to address")
-        self._set_status("Disconnected", "#6B7280")
+        self._set_status(reason or "Disconnected", "#6B7280")
         self.stack.setCurrentWidget(self.connect_page)
         self._resolution = ""
         self.stats_label.setText("")
-        self.audio_btn.setChecked(False)
         self.audio_btn.setEnabled(False)
         self.video_widget.image = None
         self.video_widget.update()
@@ -760,7 +774,7 @@ class MainWindow(QMainWindow):
         self._set_status(f"Reconnecting... (attempt {attempt})", AMBER)
 
     def _on_info_received(self, info: dict):
-        device = info.get("device", "Unknown")
+        device = str(info.get("device") or "Unknown")
         sw = info.get("screenWidth", 0)
         sh = info.get("screenHeight", 0)
         android_ver = info.get("androidVersion", "?")
@@ -796,8 +810,7 @@ class MainWindow(QMainWindow):
     # ── Network scan ──
 
     def _on_scan_clicked(self):
-        port = int(self.port_input.text().strip() or "8765")
-        self.scanner.start_scan(port)
+        self.scanner.start_scan(self._port())
 
     def _on_scan_started(self):
         self.scan_btn.setEnabled(False)
@@ -810,7 +823,7 @@ class MainWindow(QMainWindow):
         self.scan_btn.setText("Scan again")
         while self.phone_list.count():
             self.phone_list.takeAt(0).widget().deleteLater()
-        port = self.port_input.text().strip() or "8765"
+        port = self._port()
         for ip, name in found:
             card, row = _frame("card", QHBoxLayout, (16, 14, 16, 14), 14)
             tile = QLabel()
@@ -929,6 +942,18 @@ class MainWindow(QMainWindow):
             return
         self._send_command({"type": "toggle_audio", "enabled": checked})
         if checked:
+            self.audio_player.start()
+        else:
+            self.audio_player.stop()
+
+    def _on_audio_state(self, enabled: bool):
+        """Follow the phone's own audio switch without echoing a toggle_audio back."""
+        if self.audio_btn.isChecked() == enabled:
+            return
+        self.audio_btn.blockSignals(True)
+        self.audio_btn.setChecked(enabled)
+        self.audio_btn.blockSignals(False)
+        if enabled:
             self.audio_player.start()
         else:
             self.audio_player.stop()

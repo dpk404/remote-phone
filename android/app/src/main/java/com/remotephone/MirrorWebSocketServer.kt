@@ -40,9 +40,11 @@ class MirrorWebSocketServer(
         const val CLOSE_REJECTED = 1008
         /** Frames queued for one client before it counts as behind; a keyframe still draining is far below this. */
         private const val MAX_QUEUED_FRAMES = 8
+        // shortcut: past 4 MB a joiner starts from a requested keyframe, raise it if joining mid-motion feels slow on big-heap phones
+        private const val MAX_GOP_BYTES = 4 * 1024 * 1024
 
         /** The computer's own name, without the prefix the RemotePhone clients put in their hello. */
-        fun displayName(name: String) = name.removePrefix("RemotePhone Web on ").removePrefix("RemotePhone on ")
+        fun displayName(name: String) = name.removePrefix("RemotePhone Web on ").removePrefix("RemotePhone on ").removeSuffix(".local")
         fun isBrowser(name: String) = name.startsWith("RemotePhone Web on ")
     }
 
@@ -60,9 +62,10 @@ class MirrorWebSocketServer(
     // so it never sees a delta ahead of its keyframe.
     private val lock = Any()
     private var videoConfigFrame: ByteArray? = null
-    private val gop = ArrayList<ByteArray>()
+    private val gop = ArrayList<ByteArray>()  // empty when over MAX_GOP_BYTES, until the next keyframe
+    private var gopBytes = 0
     private val ready = HashMap<WebSocket, Watcher>()
-    private val stale = HashSet<WebSocket>()  // fell behind and had frames skipped: no deltas until a keyframe
+    private val stale = HashSet<WebSocket>()  // fell behind or joined without a picture: no video until drained and a keyframe
 
     // Consent: video and control flow only to computers the owner allowed, for the mirroring
     // session or for good when remembered. Allow hands the computer a random secret inside TLS;
@@ -82,17 +85,17 @@ class MirrorWebSocketServer(
     }
 
     override fun onClose(conn: WebSocket, code: Int, reason: String, remote: Boolean) {
-        val changed = synchronized(lock) {
+        val (wasReady, wasPending) = synchronized(lock) {
             awaitingAuth.remove(conn)
             val wasPending = pending.entries.firstOrNull { it.value.conn === conn }?.let {
                 mainHandler.removeCallbacks(it.value.timeout)
                 pending.remove(it.key)
             } != null
             stale.remove(conn)
-            ready.remove(conn) != null || wasPending
+            Pair(ready.remove(conn) != null, wasPending)
         }
-        RemoteAccessibilityService.liftFinger()  // it may have left mid-press
-        if (changed) onClientsChanged()
+        if (wasReady) RemoteAccessibilityService.liftFinger()  // it may have left mid-press
+        if (wasReady || wasPending) onClientsChanged()
         Log.i(TAG, "Client disconnected: ${conn.remoteSocketAddress} (code=$code)")
     }
 
@@ -107,6 +110,9 @@ class MirrorWebSocketServer(
         }
         conns.forEach { it.close(1000, "Disconnected on the phone") }
     }
+
+    /** A normal close for everyone, so clients do not retry; [stop] alone closes with 1001. */
+    fun closeAll() = connections.forEach { it.close(1000, "Mirroring stopped on the phone") }
 
     /** Computers waiting for the owner's answer. */
     fun pendingRequests(): List<PendingRequest> = synchronized(lock) {
@@ -222,9 +228,10 @@ class MirrorWebSocketServer(
     /** Start streaming to an allowed client: the current picture first, then live frames.
      *  [secret] is handed over once, on the Allow that created it. */
     private fun grant(conn: WebSocket, id: String, name: String, secret: String?) {
-        synchronized(lock) {
+        val noPicture = synchronized(lock) {
             try {
                 conn.send(approvalJson("granted", secret))
+                if (audioOn) conn.send(audioJson(true))
                 videoConfigFrame?.let { conn.send(it) }
                 gop.forEach { conn.send(it) }
             } catch (e: Exception) {
@@ -232,7 +239,10 @@ class MirrorWebSocketServer(
             }
             val address = conn.remoteSocketAddress?.address?.hostAddress ?: ""
             ready[conn] = Watcher(id, name, address, System.currentTimeMillis())
+            // Without a keyframe to replay, deltas would only break its decoder
+            gop.isEmpty().also { if (it) stale.add(conn) }
         }
+        if (noPicture) onKeyFrameNeeded()
         conn.getAttachment<Int?>()?.takeIf { it > 0 }?.let(onBitrate)
         onClientsChanged()
     }
@@ -275,6 +285,17 @@ class MirrorWebSocketServer(
         put("androidVersion", Build.VERSION.RELEASE)
     }.toString()
 
+    private fun audioJson(enabled: Boolean): String = JSONObject().put("type", "audio").put("enabled", enabled).toString()
+
+    private var audioOn = false  // guarded by [lock]
+
+    /** Tells every allowed client the phone's audio state, so their playback and button follow it. */
+    fun setAudio(enabled: Boolean) {
+        val conns = synchronized(lock) { audioOn = enabled; ready.keys.toList() }
+        val json = audioJson(enabled)
+        conns.forEach { try { it.send(json) } catch (_: Exception) {} }
+    }
+
     fun updateScreenSize(width: Int, height: Int) {
         screenWidth = width
         screenHeight = height
@@ -313,37 +334,48 @@ class MirrorWebSocketServer(
      * Broadcast a binary frame (video or audio) to every client that has had its replay,
      * keeping the current group of pictures for the next joiner.
      * A client whose send queue backs up skips deltas, so the encoder thread never blocks. One
-     * skipped delta breaks every delta after it, so that client gets none until a keyframe,
-     * which is asked for at once.
-     * ponytail: the kept group grows with the keyframe interval (up to 10 s of frames replayed to
-     * a joiner). If joining mid-motion feels slow, skip the replay while frames are flowing and
-     * start the joiner from a requested keyframe instead.
+     * skipped delta breaks every delta after it, so that client gets no video until its queue has
+     * drained, and then resumes at the next keyframe, which is asked for only once it is waiting.
      */
     fun broadcastFrame(frame: ByteArray) {
         if (frame.isEmpty()) return
         val type = frame[0]
+        val video = type == ScreenCaptureService.FRAME_VIDEO_KEY || type == ScreenCaptureService.FRAME_VIDEO_DELTA
+        var waiting = false
         synchronized(lock) {
             when (type) {
                 ScreenCaptureService.FRAME_VIDEO_CONFIG -> { videoConfigFrame = frame; gop.clear() }
-                ScreenCaptureService.FRAME_VIDEO_KEY -> { gop.clear(); gop.add(frame) }
-                ScreenCaptureService.FRAME_VIDEO_DELTA -> gop.add(frame)
+                ScreenCaptureService.FRAME_VIDEO_KEY -> { gop.clear(); gop.add(frame); gopBytes = frame.size }
+                ScreenCaptureService.FRAME_VIDEO_DELTA -> if (gop.isNotEmpty()) {
+                    gop.add(frame)
+                    gopBytes += frame.size
+                    if (gopBytes > MAX_GOP_BYTES) {
+                        gop.clear()
+                        Log.i(TAG, "Replay buffer over $MAX_GOP_BYTES bytes, dropped until the next keyframe")
+                    }
+                }
             }
             for (conn in ready.keys) {
                 try {
                     if (!conn.isOpen) continue
-                    if (type == ScreenCaptureService.FRAME_VIDEO_KEY) {
-                        stale.remove(conn)
-                    } else if (type == ScreenCaptureService.FRAME_VIDEO_DELTA &&
-                        (conn in stale || (conn as WebSocketImpl).outQueue.size > MAX_QUEUED_FRAMES)) {
-                        if (stale.add(conn)) Log.i(TAG, "Client ${conn.remoteSocketAddress} fell behind, skipping to the next keyframe")
-                        continue
+                    if (video) {
+                        val queued = (conn as WebSocketImpl).outQueue.size
+                        if (conn in stale) {
+                            if (queued > 1) continue
+                            if (type == ScreenCaptureService.FRAME_VIDEO_DELTA) { waiting = true; continue }
+                            stale.remove(conn)
+                        } else if (type == ScreenCaptureService.FRAME_VIDEO_DELTA && queued > MAX_QUEUED_FRAMES) {
+                            stale.add(conn)
+                            Log.i(TAG, "Client ${conn.remoteSocketAddress} fell behind, skipping to the next keyframe")
+                            continue
+                        }
                     }
                     conn.send(frame)
                 } catch (e: Exception) {
                     // Client may have disconnected; onClose cleans up
                 }
             }
-            if (type == ScreenCaptureService.FRAME_VIDEO_DELTA && stale.isNotEmpty()) onKeyFrameNeeded()
         }
+        if (waiting) onKeyFrameNeeded()
     }
 }

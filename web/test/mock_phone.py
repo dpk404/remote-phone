@@ -74,7 +74,7 @@ async def session(ws, fp):
     print("<-", hello, flush=True)
     await ws.send(json.dumps({"type": "info", "device": "Mock Pixel", "screenWidth": W, "screenHeight": H,
                               "audioAvailable": True, "androidVersion": "15",
-                              "liveTouch": os.environ.get("MOCK_LIVE_TOUCH") != "0"}))
+                              "liveTouch": True}))
     cid = hello.get("id")
     if cid in approved:
         nonce = secrets.token_hex(32)
@@ -97,7 +97,10 @@ async def session(ws, fp):
             print("<-", m, flush=True)
             try:
                 c = json.loads(m)
-                if c.get("type") == "toggle_audio": audio_on = c.get("enabled")
+                # like the phone: only a real change is applied and announced
+                if c.get("type") == "toggle_audio" and (c.get("enabled") is True) != audio_on:
+                    audio_on = not audio_on
+                    await ws.send(json.dumps({"type": "audio", "enabled": audio_on}))
                 if c.get("type") == "copy": await ws.send(json.dumps({"type": "clipboard", "content": "hola desde el móvil"}))
             except Exception: pass
     rt = asyncio.create_task(reader())

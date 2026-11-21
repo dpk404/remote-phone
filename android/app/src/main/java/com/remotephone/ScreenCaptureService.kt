@@ -64,9 +64,13 @@ class ScreenCaptureService : Service() {
 
         private var instance: ScreenCaptureService? = null
 
+        const val EXTRA_AUDIO = "audio"
+
         fun toggleAudio(enabled: Boolean) {
             instance?.setAudioEnabled(enabled)
         }
+
+        fun audioEnabled(): Boolean = instance?.takeIf { it.isRunning }?.audioEnabled == true
 
         /** The computers currently watching, or null when not mirroring. */
         fun watchers(): List<MirrorWebSocketServer.Watcher>? = instance?.takeIf { it.isRunning }?.webSocketServer?.watchers()
@@ -84,7 +88,7 @@ class ScreenCaptureService : Service() {
         }
 
         /** Set by the activity while visible; called on the main thread when watchers or requests change. */
-        @Volatile var onClientsChanged: ((List<MirrorWebSocketServer.Watcher>) -> Unit)? = null
+        @Volatile var onClientsChanged: ((List<MirrorWebSocketServer.Watcher>?) -> Unit)? = null
     }
 
     private fun answer(id: String, allow: Boolean) {
@@ -130,7 +134,7 @@ class ScreenCaptureService : Service() {
     private val encWidth get() = scaled(screenWidth)
     private val encHeight get() = scaled(screenHeight)
     private fun scaled(pixels: Int) =
-        if (sizeStep == 0) pixels else (pixels * SIZE_STEPS[sizeStep]).toInt() and (-16)  // encoders want multiples of 16
+        if (sizeStep == 0) pixels else (pixels * SIZE_STEPS[sizeStep]).toInt() and (-2)  // even, like the full size; multiples of 16 would change the shape
     @Volatile private var lastKeyFrameRequest = 0L
 
     override fun onCreate() {
@@ -158,6 +162,7 @@ class ScreenCaptureService : Service() {
                 }
                 if (data != null && resultCode == Activity.RESULT_OK) {
                     startCapture(resultCode, data)
+                    if (intent.getBooleanExtra(EXTRA_AUDIO, false)) setAudioEnabled(true)
                 }
             }
             ACTION_STOP -> {
@@ -185,9 +190,15 @@ class ScreenCaptureService : Service() {
         val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = projectionManager.getMediaProjection(resultCode, data)
 
-        mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+        val projection = mediaProjection
+        projection?.registerCallback(object : MediaProjection.Callback() {
+            // Also fires for stopCapture's own projection.stop(), once this session is already over
             override fun onStop() {
+                if (!isRunning || mediaProjection !== projection) return
+                Log.i(TAG, "Projection stopped by the system")
                 stopCapture()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
             }
         }, null)
 
@@ -199,14 +210,7 @@ class ScreenCaptureService : Service() {
         videoEncoder = encoder
         inputSurface = surface
 
-        // Create virtual display targeting the encoder surface
-        virtualDisplay = mediaProjection!!.createVirtualDisplay(
-            "RemotePhone",
-            screenWidth, screenHeight, density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            surface,
-            null, null
-        )
+        virtualDisplay = createDisplay(surface)
 
         // Setup audio capture (Android 10+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -272,17 +276,17 @@ class ScreenCaptureService : Service() {
     /**
      * H.264 encoder at the current screen size, tuned for low-latency streaming.
      * Hardware encoders reject keys they do not support with IllegalArgumentException (low
-     * latency on older Qualcomm ones, profile/level on some custom ROMs), so each attempt asks
-     * for less and only the refused key is lost.
+     * latency on older Qualcomm ones, profile/level on some custom ROMs), so each attempt drops
+     * low latency, profile/level or both, keeping the other tuning; the bare format comes last.
      */
     private fun createEncoder(): MediaCodec {
         val encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-        for (lowLatency in listOf(true, false)) {
+        for (profile in listOf(true, false)) for (lowLatency in listOf(true, false)) {
             try {
-                encoder.configure(tunedVideoFormat(encoder, lowLatency), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                encoder.configure(tunedVideoFormat(encoder, lowLatency, profile), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                 return encoder
             } catch (e: IllegalArgumentException) {
-                Log.w(TAG, "Encoder rejected the tuned format (low latency $lowLatency), retrying with less")
+                Log.w(TAG, "Encoder rejected the tuned format (low latency $lowLatency, profile $profile), retrying with less")
                 encoder.reset()
             }
         }
@@ -290,7 +294,7 @@ class ScreenCaptureService : Service() {
         return encoder
     }
 
-    private fun tunedVideoFormat(encoder: MediaCodec, lowLatency: Boolean): MediaFormat =
+    private fun tunedVideoFormat(encoder: MediaCodec, lowLatency: Boolean, profile: Boolean): MediaFormat =
         baseVideoFormat().apply {
             // Reduce encoder output buffering for lower latency
             if (lowLatency && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -305,7 +309,7 @@ class ScreenCaptureService : Service() {
             // Main profile: better compression than Baseline, no B-frames so still low latency.
             // A profile must come with a level, and a fixed one is too low for tall screens at
             // 60 fps, so take the highest level this encoder offers.
-            encoder.codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).profileLevels
+            if (profile) encoder.codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).profileLevels
                 .filter { it.profile == MediaCodecInfo.CodecProfileLevel.AVCProfileMain }
                 .maxOfOrNull { it.level }
                 ?.let {
@@ -322,9 +326,17 @@ class ScreenCaptureService : Service() {
         if (isRunning && readScreenSize()) restartVideo()
     }
 
+    private fun createDisplay(surface: Surface): VirtualDisplay = mediaProjection!!.createVirtualDisplay(
+        "RemotePhone",
+        encWidth, encHeight, density,
+        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+        surface,
+        null, null
+    )
+
     /**
-     * Swap in an encoder at the new screen size. The virtual display is resized, not recreated:
-     * Android 14 allows a single createVirtualDisplay per MediaProjection.
+     * Swap in an encoder at the new screen size. Android 14 allows a single createVirtualDisplay
+     * per MediaProjection, so it resizes; Android 13 does not rescale a resized display, so it recreates.
      */
     private fun restartVideo() {
         try {
@@ -338,8 +350,13 @@ class ScreenCaptureService : Service() {
             inputSurface = surface
             oldThread?.join(500)
             // Resize before attaching, so the new surface only ever sees the new projection
-            virtualDisplay?.resize(encWidth, encHeight, density)
-            virtualDisplay?.setSurface(surface)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                virtualDisplay?.resize(encWidth, encHeight, density)
+                virtualDisplay?.setSurface(surface)
+            } else {
+                virtualDisplay?.release()
+                virtualDisplay = createDisplay(surface)
+            }
             try {
                 old?.stop()
                 old?.release()
@@ -485,8 +502,11 @@ class ScreenCaptureService : Service() {
         }
     }
 
+    // From the phone's switch on the main thread and from a client's toggle_audio on the server's
+    @Synchronized
     fun setAudioEnabled(enabled: Boolean) {
-        if (!audioAvailable) return
+        if (!audioAvailable || (enabled && !isRunning)) return
+        val was = audioEnabled
 
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -497,7 +517,7 @@ class ScreenCaptureService : Service() {
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
             audioRecord?.startRecording()
             audioThread = Thread({ readAudioCapture() }, "AudioThread").apply { start() }
-            Log.i(TAG, "Audio streaming enabled — phone speakers muted")
+            Log.i(TAG, "Audio streaming enabled, phone speakers muted")
         } else if (!enabled && audioEnabled) {
             audioEnabled = false
             try { audioRecord?.stop() } catch (_: Exception) {}
@@ -505,7 +525,11 @@ class ScreenCaptureService : Service() {
             if (savedMusicVolume > 0) {
                 audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, savedMusicVolume, 0)
             }
-            Log.i(TAG, "Audio streaming disabled — phone speakers restored")
+            Log.i(TAG, "Audio streaming disabled, phone speakers restored")
+        }
+        if (audioEnabled != was) {
+            webSocketServer?.setAudio(audioEnabled)
+            mainHandler.post(publishClients)  // the phone's switch follows
         }
     }
 
@@ -536,6 +560,7 @@ class ScreenCaptureService : Service() {
     private fun stopCapture() {
         if (!isRunning) return
         isRunning = false
+        mainHandler.post { onClientsChanged?.invoke(null) }
 
         // Restore phone volume if audio was streaming
         try { setAudioEnabled(false) } catch (_: Exception) {}
@@ -574,6 +599,7 @@ class ScreenCaptureService : Service() {
         if (server != null) {
             Thread {
                 try {
+                    server.closeAll()
                     server.stop(1000)
                 } catch (e: Exception) {
                     Log.e(TAG, "Error stopping WebSocket server", e)

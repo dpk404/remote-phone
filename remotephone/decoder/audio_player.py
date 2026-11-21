@@ -14,7 +14,7 @@ except (ImportError, OSError):
     sd = None
 
 _FRAME_BYTES = 4  # 2 channels × int16
-_MAX_QUEUED = 4   # chunks (~93 ms each) held before new audio is dropped rather than played late
+_MAX_QUEUED = 4   # chunks (~93 ms each) held; past that the backlog is dropped so playback catches up
 
 
 class AudioPlayer:
@@ -54,7 +54,12 @@ class AudioPlayer:
         try:
             self._queue.put_nowait(data)
         except queue.Full:
-            pass
+            try:
+                while True:
+                    self._queue.get_nowait()
+            except queue.Empty:
+                pass
+            self._queue.put_nowait(data)  # only this thread puts, so there is room now
 
     def _write_loop(self, stream):
         # write() blocks for as long as the chunk plays, so it must stay off the GUI thread
