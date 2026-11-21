@@ -32,4 +32,9 @@ object Prefs {
         prefs(ctx).edit().putString(REMEMBERED, json.toString()).apply()
     }
     fun forgetRemembered(ctx: Context) = prefs(ctx).edit().remove(REMEMBERED).apply()
+    fun forgetRemembered(ctx: Context, id: String) {
+        val json = JSONObject(prefs(ctx).getString(REMEMBERED, null) ?: "{}")
+        json.remove(id)
+        prefs(ctx).edit().putString(REMEMBERED, json.toString()).apply()
+    }
 }

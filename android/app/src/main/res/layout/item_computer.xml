@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A computer watching (home) or remembered (settings) -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingStart="14dp"
+    android:paddingEnd="8dp"
+    android:paddingTop="10dp"
+    android:paddingBottom="10dp">
+
+    <ImageView
+        android:id="@+id/icon"
+        style="@style/Tile"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:padding="9dp"
+        android:importantForAccessibility="no" />
+
+    <LinearLayout
+        style="@style/TextColumn"
+        android:layout_marginStart="12dp">
+
+        <TextView
+            android:id="@+id/name"
+            style="@style/Title"
+            android:singleLine="true"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/detail"
+            style="@style/Body"
+            android:layout_marginTop="2dp"
+            android:textSize="12sp"
+            android:singleLine="true"
+            android:ellipsize="end" />
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/action"
+        style="@style/RowAction" />
+</LinearLayout>

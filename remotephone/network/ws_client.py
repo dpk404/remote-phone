@@ -1,5 +1,5 @@
 """
-RemotePhone — WebSocket Client
+RemotePhone: WebSocket Client
 Handles the network connection to the Android phone's WebSocket server.
 Runs in a background thread, emits Qt signals for thread-safe UI updates.
 Auto-reconnects on connection loss with exponential backoff.

@@ -1,5 +1,5 @@
 """
-RemotePhone — Network Scanner
+RemotePhone: Network Scanner
 Scans the local subnet for devices running a RemotePhone WebSocket server (port 8765).
 Discovery is two-stage: a fast parallel TCP connect probe narrows the subnet to hosts
 with the port open, then each candidate is verified with the RemotePhone WebSocket
@@ -93,13 +93,14 @@ def probe_host(ip: str, port: int) -> str | None:
     return None
 
 
-def is_remotephone_server(ip: str, port: int) -> bool:
+def is_remotephone_server(ip: str, port: int) -> str | None:
     """
     Confirm the host is an actual RemotePhone server (not just any open port).
 
     Performs the WebSocket handshake, sends a `hello`, and waits for the server's
-    `info` reply. A bare open port — or a network/firewall that ACKs every address —
+    `info` reply. A bare open port, or a network/firewall that ACKs every address,
     will fail the handshake or never send a valid `info`, so it is rejected.
+    Returns the device name from `info`, or None.
     """
     ws = None
     try:
@@ -116,10 +117,10 @@ def is_remotephone_server(ip: str, port: int) -> bool:
                 except json.JSONDecodeError:
                     continue
                 if obj.get("type") == "info":
-                    return True
-        return False
+                    return str(obj.get("device") or ip)
+        return None
     except Exception:
-        return False
+        return None
     finally:
         if ws is not None:
             try:
@@ -128,20 +129,21 @@ def is_remotephone_server(ip: str, port: int) -> bool:
                 pass
 
 
-def probe_and_verify(ip: str, port: int) -> str | None:
+def probe_and_verify(ip: str, port: int) -> tuple[str, str] | None:
     """Fast TCP probe, then verify the host actually speaks the RemotePhone protocol."""
     if probe_host(ip, port) is None:
         return None
     for _ in range(1 + VERIFY_RETRIES):
-        if is_remotephone_server(ip, port):
-            return ip
+        name = is_remotephone_server(ip, port)
+        if name:
+            return ip, name
     return None
 
 
 class NetworkScanner(QObject):
     """Scans local network for RemotePhone servers. Emits results via Qt signals."""
 
-    scan_complete = pyqtSignal(list)  # list of IPs found
+    scan_complete = pyqtSignal(list)  # (ip, device name) pairs found
     scan_started = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -167,7 +169,7 @@ class NetworkScanner(QObject):
 
         log.info(f"Scanning {', '.join(p + '0/24' for p in prefixes)} for port {port}")
 
-        def sweep() -> list[str]:
+        def sweep() -> list[tuple[str, str]]:
             hits = []
             # One subnet at a time: blasting every /24 at once overloads the phone's
             # radio and drops SYNs, so a scan across several interfaces misses it.
@@ -177,7 +179,7 @@ class NetworkScanner(QObject):
                     for future in as_completed([pool.submit(probe_and_verify, ip, port) for ip in targets]):
                         result = future.result()
                         if result:
-                            log.info(f"Found RemotePhone server at {result}:{port}")
+                            log.info(f"Found RemotePhone server {result[1]} at {result[0]}:{port}")
                             hits.append(result)
             return hits
 

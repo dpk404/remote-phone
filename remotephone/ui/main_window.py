@@ -1,15 +1,23 @@
 """
-RemotePhone — Main Window
+RemotePhone: Main Window
 Displays the mirrored phone screen and captures input for remote control.
 """
 
+import html
+import json
+import threading
+import urllib.request
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QStatusBar,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame,
+    QLabel, QLineEdit, QPushButton, QToolButton, QStackedWidget, QScrollArea,
     QSizePolicy, QCheckBox, QMessageBox
 )
-from PyQt6.QtCore import Qt, QRectF, QTimer, QSettings
-from PyQt6.QtGui import QImage, QPainter, QColor, QFont, QKeyEvent
+from PyQt6.QtCore import Qt, QRectF, QTimer, QSettings, QSize, QUrl, pyqtSignal
+from PyQt6.QtGui import (QImage, QPainter, QColor, QFont, QFontDatabase, QIntValidator, QKeyEvent, QIcon,
+                         QDesktopServices)
 
 from remotephone.network.ws_client import WebSocketClient, FRAME_AUDIO_DATA
 from remotephone.network.scanner import NetworkScanner
@@ -18,9 +26,85 @@ from remotephone.decoder.audio_player import AudioPlayer
 from remotephone.input.input_handler import InputHandler
 
 _BACK = {"type": "key", "action": "back"}
-_IDLE_HINT = "Connect to your phone\nto start mirroring"
-_APPROVAL_HINT = ("Waiting for approval on the phone\n\n"
-                  "Allow this computer in the RemotePhone\nnotification or in the app")
+_IDLE_HINT = "Waiting for the picture"
+ICONS = Path(__file__).resolve().parent.parent / "assets" / "icons"
+RELEASES_URL = "https://github.com/dpk404/remote-phone/releases"
+PYPI_URL = "https://pypi.org/pypi/remote-phone/json"
+GREEN, AMBER, RED = "#10B981", "#F59E0B", "#EF4444"
+try:
+    VERSION = version("remote-phone")
+except PackageNotFoundError:
+    VERSION = ""
+
+
+def is_newer(latest: str, current: str) -> bool:
+    return tuple(map(int, latest.split("."))) > tuple(map(int, current.split(".")))
+
+
+def _icon(name: str) -> QIcon:
+    return QIcon(str(ICONS / f"{name}.svg"))
+
+
+def _label(text: str = "", name: str = "") -> QLabel:
+    label = QLabel(text)
+    label.setObjectName(name)
+    return label
+
+
+def _rule() -> QFrame:
+    rule = QFrame()
+    rule.setObjectName("rule")
+    rule.setFixedHeight(1)
+    return rule
+
+
+def _frame(name: str, layout_cls=QVBoxLayout, margins=(0, 0, 0, 0), spacing=0):
+    frame = QFrame()
+    frame.setObjectName(name)
+    layout = layout_cls(frame)
+    layout.setContentsMargins(*margins)
+    layout.setSpacing(spacing)
+    return frame, layout
+
+
+def _tool(icon: str, tip: str = "", text: str = "") -> QToolButton:
+    btn = QToolButton()
+    btn.setIcon(_icon(icon))
+    btn.setIconSize(QSize(18, 18))
+    btn.setToolTip(tip)
+    btn.setText(text)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # keys keep going to the phone
+    if text:
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        btn.setFixedHeight(50)
+        btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    else:
+        btn.setFixedSize(36, 36)
+    return btn
+
+
+def _button(text: str, name: str, height: int = 0) -> QPushButton:
+    btn = QPushButton(text)
+    btn.setObjectName(name)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    if height:
+        btn.setFixedHeight(height)
+    return btn
+
+
+def _scroll_page(content: QWidget, max_width: int = 480) -> QScrollArea:
+    """Centres content at most max_width wide; scrolls instead of setting a window minimum height."""
+    content.setMaximumWidth(max_width)
+    page, row = _frame("page", QHBoxLayout)
+    row.addWidget(content)
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    scroll.setWidget(page)
+    return scroll
+
 
 # (key, action) rows for the help dialog and the ? button tooltip. Mirrors the
 # gesture and key handling in input_handler.py.
@@ -65,13 +149,13 @@ class VideoWidget(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._pressing = False
-        # Skip automatic background erase — we paint the full widget ourselves
+        # Skip automatic background erase, we paint the full widget ourselves
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
 
     def update_frame(self, image: QImage):
         self.image = image
-        self.update()  # coalesced repaint — avoids blocking the decoder thread
+        self.update()  # coalesced repaint, avoids blocking the decoder thread
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -79,14 +163,16 @@ class VideoWidget(QWidget):
         painter.fillRect(self.rect(), QColor(0, 0, 0))
 
         if self.image:
-            # Draw QImage directly — avoids expensive QPixmap.fromImage() conversion per frame
+            # Draw QImage directly: avoids expensive QPixmap.fromImage() conversion per frame
             target = QRectF(*self._get_display_rect())
             source = QRectF(0, 0, self.image.width(), self.image.height())
             painter.drawImage(target, self.image, source)
         else:
             # Placeholder
             painter.setPen(QColor(107, 114, 128))
-            painter.setFont(QFont("Inter", 14))
+            font = QFont()
+            font.setPointSize(14)
+            painter.setFont(font)
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.hint)
 
         painter.end()
@@ -146,7 +232,7 @@ class VideoWidget(QWidget):
             self._pressing = False
             px, py = self._map_to_phone(event.position())
             if px is None:
-                px, py = -1, -1  # released outside — handler uses last known position
+                px, py = -1, -1  # released outside, handler uses last known position
             cmd = self.input.on_release(px, py)
             if cmd:
                 self.send_command(cmd)
@@ -178,13 +264,17 @@ class VideoWidget(QWidget):
         super().wheelEvent(event)
 
 
+
+
 class MainWindow(QMainWindow):
-    """Main application window with connection controls, video display, and status bar."""
+    """Connect, Waiting and Mirroring pages on one stack."""
+
+    update_found = pyqtSignal()
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("RemotePhone")
-        self.resize(420, 860)
+        self.resize(480, 820)
 
         # Components
         self.ws_client = WebSocketClient()
@@ -195,7 +285,9 @@ class MainWindow(QMainWindow):
 
         # State
         self.connected = False
+        self._connecting = False  # from a connect click until the connection is given up
         self.frame_count = 0  # decoded frames since the last FPS tick
+        self._resolution = ""
         self._landscape = False  # shape the window was last fitted to; starts portrait
 
         self._setup_ui()
@@ -206,90 +298,271 @@ class MainWindow(QMainWindow):
         self.fps_timer.timeout.connect(self._update_fps)
         self.fps_timer.start(1000)
 
-        if self.autoscan_checkbox.isChecked():
+        if self.scan_switch.isChecked():
             self.scanner.start_scan()
+        if self.updates_switch.isChecked():
+            threading.Thread(target=self._check_update, daemon=True, name="UpdateCheck").start()
 
     def _setup_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self.stack = QStackedWidget()
+        self.setCentralWidget(self.stack)
+        self.connect_page = self._build_connect()
+        self.wait_page = self._build_wait()
+        self.mirror_page = self._build_mirror()
+        for page in (self.connect_page, self.wait_page, self.mirror_page):
+            self.stack.addWidget(page)
 
-        # ── Connection Bar ──
-        conn_bar = QWidget()
-        conn_bar.setObjectName("connectionBar")
-        conn_layout = QHBoxLayout(conn_bar)
-        conn_layout.setContentsMargins(12, 8, 12, 8)
-        conn_layout.setSpacing(8)
+    def _build_connect(self) -> QWidget:
+        content, col = _frame("content")
 
-        ip_label = QLabel("IP:")
-        ip_label.setFixedWidth(18)
-        self.ip_input = QLineEdit()
-        self.ip_input.setPlaceholderText("Phone IP address")
-        self.ip_input.setFixedWidth(160)
-        self.ip_input.setText(QSettings().value("last_ip", "", type=str))
+        brand, row = _frame("", QHBoxLayout, (28, 28, 28, 0), 14)
+        logo = QLabel()
+        logo.setPixmap(_icon("logo").pixmap(40, 40))
+        titles = QVBoxLayout()
+        titles.setSpacing(2)
+        titles.addWidget(_label("RemotePhone", "brand"))
+        titles.addWidget(_label("Mirror and control your Android phone", "muted"))
+        row.addWidget(logo)
+        row.addLayout(titles, 1)
+        col.addWidget(brand)
 
-        self.scan_btn = QPushButton("Scan")
-        self.scan_btn.setObjectName("scanBtn")
-        self.scan_btn.setFixedWidth(50)
-        self.scan_btn.setToolTip("Scan local network for RemotePhone server")
+        phones, box = _frame("", QVBoxLayout, (28, 30, 28, 0), 10)
+        head = QHBoxLayout()
+        head.addWidget(_label("PHONES ON YOUR NETWORK", "section"))
+        head.addStretch()
+        self.scan_btn = _button("Scan again", "ghost", 30)
+        self.scan_btn.setIcon(_icon("refresh"))
+        self.scan_btn.setIconSize(QSize(14, 14))
+        self.scan_btn.setToolTip("Scan the local network for phones")
+        head.addWidget(self.scan_btn)
+        box.addLayout(head)
+        self.phone_list = QVBoxLayout()
+        self.phone_list.setSpacing(10)
+        box.addLayout(self.phone_list)
+        box.addWidget(_label("Phones appear here while they are mirroring.", "small"))
+        col.addWidget(phones)
 
-        port_label = QLabel("Port:")
-        port_label.setFixedWidth(30)
-        self.port_input = QLineEdit()
-        self.port_input.setPlaceholderText("Port")
-        self.port_input.setText("8765")
-        self.port_input.setFixedWidth(60)
+        divider, row = _frame("", QHBoxLayout, (28, 22, 28, 0), 12)
+        row.addWidget(_rule(), 1)
+        row.addWidget(_label("or enter an address", "small"))
+        row.addWidget(_rule(), 1)
+        col.addWidget(divider)
 
-        self.connect_btn = QPushButton("Connect")
-        self.connect_btn.setObjectName("connectBtn")
-        self.connect_btn.setFixedWidth(110)  # "Disconnect", the widest label, needs 107 at 13px bold
+        form, box = _frame("", QVBoxLayout, (28, 18, 28, 0), 12)
+        fields = QHBoxLayout()
+        fields.setSpacing(10)
+        self.ip_input = QLineEdit(QSettings().value("last_ip", "", type=str))
+        self.ip_input.setPlaceholderText("192.168.1.4")
+        self.port_input = QLineEdit("8765")
+        self.port_input.setPlaceholderText("8765")
+        self.port_input.setFixedWidth(92)
+        for caption, edit in (("IP address", self.ip_input), ("Port", self.port_input)):
+            field = QVBoxLayout()
+            field.setSpacing(6)
+            field.addWidget(_label(caption, "fieldLabel"))
+            edit.setFixedHeight(40)
+            field.addWidget(edit)
+            fields.addLayout(field, 1 if edit is self.ip_input else 0)
+        box.addLayout(fields)
+        self.connect_btn = _button("Connect to address", "secondary", 40)
+        box.addWidget(self.connect_btn)
+        col.addWidget(form)
 
-        self.audio_checkbox = QCheckBox("Audio")
-        self.audio_checkbox.setEnabled(False)
-        self.audio_checkbox.setToolTip("Stream phone audio (requires Android 10+)")
+        how, box = _frame("", QVBoxLayout, (28, 26, 28, 0), 10)
+        box.addWidget(_label("HOW IT WORKS", "section"))
+        steps = QHBoxLayout()
+        steps.setSpacing(10)
+        for n, text in enumerate(("Start mirroring on the phone", "Pick it here or type its address",
+                                  "Tap Allow on the phone"), 1):
+            step, s = _frame("step", QVBoxLayout, (12, 12, 12, 12), 8)
+            num = _label(str(n), "stepNum")
+            num.setFixedSize(22, 22)
+            num.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            caption = _label(text, "stepText")
+            caption.setWordWrap(True)
+            s.addWidget(num)
+            s.addWidget(caption)
+            s.addStretch()
+            steps.addWidget(step, 1)
+        box.addLayout(steps)
+        col.addWidget(how)
+        col.addStretch()
 
-        conn_layout.addWidget(ip_label)
-        conn_layout.addWidget(self.ip_input)
-        conn_layout.addWidget(self.scan_btn)
-        conn_layout.addWidget(port_label)
-        conn_layout.addWidget(self.port_input)
-        conn_layout.addWidget(self.connect_btn)
-        conn_layout.addStretch()
-        conn_layout.addWidget(self.audio_checkbox)
+        prefs, box = _frame("prefs", QVBoxLayout, (16, 4, 16, 4), 0)
+        switches = []
+        for title, sub, key in (("Scan for phones at launch", "Turn off if you always type the address", "auto_scan"),
+                                ("Check for updates at launch", "Asks PyPI once for a newer version", "check_updates")):
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 10, 0, 10)
+            text = QVBoxLayout()
+            text.setSpacing(3)
+            text.addWidget(_label(title, "prefTitle"))
+            text.addWidget(_label(sub, "small"))
+            switch = QCheckBox()
+            switch.setObjectName("switch")
+            switch.setCursor(Qt.CursorShape.PointingHandCursor)
+            switch.setToolTip(title)
+            switch.setChecked(QSettings().value(key, True, type=bool))
+            switch.toggled.connect(lambda on, k=key: QSettings().setValue(k, on))
+            row.addLayout(text, 1)
+            row.addWidget(switch)
+            box.addLayout(row)
+            switches.append(switch)
+        self.scan_switch, self.updates_switch = switches
+        wrap = QHBoxLayout()
+        wrap.setContentsMargins(28, 22, 28, 0)
+        wrap.addWidget(prefs)
+        col.addLayout(wrap)
 
-        layout.addWidget(conn_bar)
-
-        # ── Video Display ──
-        self.video_widget = VideoWidget(self.input_handler, self._send_command)
-        layout.addWidget(self.video_widget, 1)
-
-        # ── Status Bar ──
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-
-        self.status_label = QLabel("Disconnected")
-        self.device_label = QLabel("")
-        self.fps_label = QLabel("")
-        self.resolution_label = QLabel("")
-
-        self.shortcuts_btn = QPushButton("\u2328 Shortcuts")  # keyboard glyph
-        self.shortcuts_btn.setObjectName("shortcutsBtn")
+        footer, row = _frame("footer", QHBoxLayout, (28, 12, 28, 12), 12)
+        self.status_label = _label("", "small")
+        self._set_status("Ready")
+        self.update_btn = _button("Update available", "pill", 24)
+        self.update_btn.setIcon(_icon("download"))
+        self.update_btn.setIconSize(QSize(12, 12))
+        self.update_btn.setToolTip(RELEASES_URL)
+        self.update_btn.hide()
+        self.shortcuts_btn = _button("Shortcuts", "link")
         self.shortcuts_btn.setToolTip(SHORTCUTS_TOOLTIP)  # hover for the list, click for the dialog
-        self.shortcuts_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        row.addWidget(self.status_label, 1)
+        row.addWidget(self.update_btn)
+        row.addWidget(_label(f"v{VERSION}" if VERSION else "", "monoSmall"))
+        row.addWidget(self.shortcuts_btn)
+        col.addSpacing(16)
+        page, outer = _frame("page")
+        outer.addWidget(_scroll_page(content), 1)
+        outer.addWidget(footer)  # outside the scroll so the status stays in view
+        return page
 
-        # Lives in the status bar: the connection bar already dictates the window's minimum width
-        self.autoscan_checkbox = QCheckBox("Auto-scan")
-        self.autoscan_checkbox.setToolTip("Scan the network for the phone when the app starts")
-        self.autoscan_checkbox.setChecked(QSettings().value("auto_scan", True, type=bool))
+    def _device_header(self, lead: QWidget, pill: QLabel, name_attr: str, addr_attr: str) -> QFrame:
+        bar, row = _frame("bar", QHBoxLayout, (16, 10, 12, 10), 10)
+        names = QVBoxLayout()
+        names.setSpacing(1)
+        for attr, obj in ((name_attr, "name"), (addr_attr, "mono")):
+            label = _label("", obj)
+            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)  # long names clip, not widen
+            setattr(self, attr, label)
+            names.addWidget(label)
+        row.addWidget(lead)
+        row.addLayout(names, 1)
+        row.addWidget(pill)
+        return bar
 
-        self.status_bar.addWidget(self.status_label, 1)
-        self.status_bar.addPermanentWidget(self.resolution_label)
-        self.status_bar.addPermanentWidget(self.device_label)
-        self.status_bar.addPermanentWidget(self.fps_label)
-        self.status_bar.addPermanentWidget(self.autoscan_checkbox)
-        self.status_bar.addPermanentWidget(self.shortcuts_btn)
+    def _build_wait(self) -> QWidget:
+        content, col = _frame("content")
+        back = _tool("back", "Back to connect")
+        back.clicked.connect(self._disconnect)
+        self.wait_pill = _label(f"<span style='color:{AMBER}'>●</span>&nbsp;Waiting", "waitPill")
+        self.wait_pill.setFixedHeight(28)
+        col.addWidget(self._device_header(back, self.wait_pill, "wait_name", "wait_addr"))
+
+        middle, box = _frame("", QVBoxLayout, (40, 24, 40, 24), 28)
+        box.addStretch()
+        glow, g = _frame("glow")
+        glow.setFixedSize(168, 268)
+        phone, p = _frame("phoneFrame", QVBoxLayout, (14, 14, 14, 14))
+        phone.setFixedSize(132, 248)
+        prompt, q = _frame("prompt", QVBoxLayout, (10, 12, 10, 12), 8)
+        tile = QLabel()
+        tile.setObjectName("tileSmall")
+        tile.setFixedSize(26, 26)
+        tile.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tile.setPixmap(_icon("monitor").pixmap(14, 14))
+        q.addWidget(tile, 0, Qt.AlignmentFlag.AlignHCenter)
+        ask = _label("This computer wants to connect", "promptText")
+        ask.setWordWrap(True)
+        ask.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        q.addWidget(ask)
+        buttons = QHBoxLayout()
+        buttons.setSpacing(5)
+        for name in ("fakeDeny", "fakeAllow"):
+            fake = QFrame()
+            fake.setObjectName(name)
+            fake.setFixedHeight(18)
+            buttons.addWidget(fake)
+        q.addLayout(buttons)
+        p.addWidget(prompt, 0, Qt.AlignmentFlag.AlignVCenter)
+        g.addWidget(phone, 0, Qt.AlignmentFlag.AlignCenter)
+        box.addWidget(glow, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        copy = QVBoxLayout()
+        copy.setContentsMargins(40, 0, 40, 0)  # 320 wide text at the 480 design width
+        copy.setSpacing(10)
+        title = _label("Tap Allow on your phone", "title")
+        self.wait_body = _label("", "body")
+        for label in (title, self.wait_body):
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setWordWrap(True)
+            copy.addWidget(label)
+        box.addLayout(copy)
+
+        lock = QHBoxLayout()
+        lock.setSpacing(8)
+        lock.addStretch()
+        icon = QLabel()
+        icon.setPixmap(_icon("lock-muted").pixmap(14, 14))
+        lock.addWidget(icon)
+        lock.addWidget(_label("Encrypted connection · Allow lasts for this mirroring session", "small"))
+        lock.addStretch()
+        box.addLayout(lock)
+        box.addStretch()
+        col.addWidget(middle, 1)
+
+        bottom, box = _frame("", QVBoxLayout, (28, 0, 28, 24), 10)
+        self.cancel_btn = _button("Cancel", "secondary", 40)
+        self.cancel_btn.clicked.connect(self._disconnect)
+        note = _label("The request closes by itself after a minute without an answer.", "small")
+        note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        note.setWordWrap(True)
+        box.addWidget(self.cancel_btn)
+        box.addWidget(note)
+        col.addWidget(bottom)
+        return _scroll_page(content)
+
+    def _build_mirror(self) -> QWidget:
+        page, col = _frame("page")
+        logo = QLabel()
+        logo.setPixmap(_icon("logo").pixmap(22, 22))
+        self.live_pill = _label("", "livePill")
+        self.live_pill.setFixedHeight(26)
+        bar = self._device_header(logo, self.live_pill, "mirror_name", "mirror_addr")
+        row = bar.layout()
+        sep = _rule()
+        sep.setFixedSize(1, 22)
+        row.addWidget(sep)
+        self.audio_btn = _tool("volume", "Stream phone audio (requires Android 10+)")
+        icon = self.audio_btn.icon()
+        icon.addFile(str(ICONS / "volume-on.svg"), QSize(), QIcon.Mode.Normal, QIcon.State.On)
+        self.audio_btn.setIcon(icon)
+        self.audio_btn.setCheckable(True)
+        self.audio_btn.setEnabled(False)
+        self.fullscreen_btn = _tool("fullscreen", "Fullscreen (F11)")
+        self.disconnect_btn = _tool("close", "Disconnect")
+        for btn in (self.audio_btn, self.fullscreen_btn, self.disconnect_btn):
+            row.addWidget(btn)
+        col.addWidget(bar)
+
+        self.video_widget = VideoWidget(self.input_handler, self._send_command)
+        col.addWidget(self.video_widget, 1)
+
+        nav, row = _frame("navRow", QHBoxLayout, (12, 6, 12, 6), 4)
+        for icon, text, action in (("back", "Back", "back"), ("home", "Home", "home"),
+                                   ("recents", "Recents", "recents"), ("alerts", "Alerts", "notifications"),
+                                   ("lock", "Lock", "power")):
+            btn = _tool(icon, text=text)
+            btn.clicked.connect(lambda _, a=action: self._send_command({"type": "key", "action": a}))
+            row.addWidget(btn)
+        col.addWidget(nav)
+
+        strip, row = _frame("strip", QHBoxLayout, (16, 0, 16, 0))
+        strip.setFixedHeight(30)
+        self.stats_label = _label("", "monoSmall")
+        self.keys_btn = _button("Keyboard shortcuts", "linkSmall")
+        self.keys_btn.setToolTip(SHORTCUTS_TOOLTIP)
+        row.addWidget(self.stats_label, 1)
+        row.addWidget(self.keys_btn)
+        col.addWidget(strip)
+        return page
 
     def _setup_connections(self):
         # Connection
@@ -297,7 +570,11 @@ class MainWindow(QMainWindow):
         self.ip_input.returnPressed.connect(self._on_connect_clicked)
         self.scan_btn.clicked.connect(self._on_scan_clicked)
         self.shortcuts_btn.clicked.connect(self._show_shortcuts)
-        self.autoscan_checkbox.toggled.connect(lambda on: QSettings().setValue("auto_scan", on))
+        self.keys_btn.clicked.connect(self._show_shortcuts)
+        self.disconnect_btn.clicked.connect(self._disconnect)
+        self.fullscreen_btn.clicked.connect(self._toggle_fullscreen)
+        self.update_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(RELEASES_URL)))
+        self.update_found.connect(self.update_btn.show)
 
         # Scanner signals
         self.scanner.scan_started.connect(self._on_scan_started)
@@ -321,155 +598,166 @@ class MainWindow(QMainWindow):
         self.decoder.frame_ready.connect(self._on_decoded_frame)
 
         # Audio toggle
-        self.audio_checkbox.toggled.connect(self._on_audio_toggled)
+        self.audio_btn.toggled.connect(self._on_audio_toggled)
 
     def _apply_stylesheet(self):
+        on, off = (str(ICONS / f"switch-{s}.svg").replace("\\", "/") for s in ("on", "off"))
+        # a stylesheet's generic monospace resolves to a proportional font on macOS
+        mono = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
         self.setStyleSheet("""
-            QMainWindow {
-                background-color: #0D0D0F;
-            }
-            #connectionBar {
-                background-color: #1A1A2E;
-                border-bottom: 1px solid #2D2D44;
-            }
-            QLabel {
-                color: #D1D5DB;
-                font-size: 13px;
-            }
+            QMainWindow, #page, #content { background-color: #0D0D0F; }
+            QScrollArea { background: transparent; border: none; }
+            QScrollBar:vertical { background: transparent; width: 8px; }
+            QScrollBar::handle:vertical { background-color: #2D2D44; border-radius: 4px; min-height: 24px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
+            QLabel { color: #F3F4F6; font-size: 13px; }
+            #brand { font-size: 18px; font-weight: 800; }
+            #muted { color: #9CA3AF; }
+            #small { color: #9CA3AF; font-size: 12px; }
+            #section { color: #9CA3AF; font-size: 11px; font-weight: 700; }
+            #name { font-size: 14px; font-weight: 700; }
+            #cardName { font-size: 15px; font-weight: 700; }
+            #mono, #monoSmall { font-family: '%s'; font-size: 12px; color: #9CA3AF; }
+            #monoSmall { font-size: 11px; }
+            #fieldLabel { font-size: 12px; font-weight: 600; color: #D1D5DB; }
+            #title { font-size: 22px; font-weight: 800; }
+            #body { font-size: 14px; color: #9CA3AF; }
+            #rule { background-color: #2D2D44; }
+            #card { background-color: #1A1A2E; border: 1px solid #2D2D44; border-radius: 12px; }
+            #tile, #tileSmall { background-color: rgba(124, 58, 237, 46); border-radius: 10px; }
+            #tileSmall { border-radius: 7px; }
+            #step { background-color: #121219; border: 1px solid #1F1F30; border-radius: 10px; }
+            #stepNum { background-color: rgba(124, 58, 237, 46); color: #B8A6F7; border-radius: 11px;
+                       font-size: 12px; font-weight: 800; }
+            #stepText { font-size: 12px; color: #D1D5DB; }
+            #prefs { background-color: #121219; border: 1px solid #1F1F30; border-radius: 12px; }
+            #prefTitle { font-size: 14px; font-weight: 600; }
+            #footer { border-top: 1px solid #1F1F30; }
+            #bar { border-bottom: 1px solid #1F1F30; }
+            #navRow, #strip { border-top: 1px solid #1F1F30; }
+            #waitPill { background-color: rgba(245, 158, 11, 41); color: #FCD34D; border-radius: 14px;
+                        padding: 0 12px; font-size: 12px; font-weight: 700; }
+            #livePill { background-color: rgba(16, 185, 129, 41); color: #6EE7B7; border-radius: 13px;
+                        padding: 0 10px; font-size: 12px; font-weight: 700; }
+            #livePill[reconnecting="true"] { background-color: rgba(245, 158, 11, 41); color: #FCD34D; }
+            #glow { background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5,
+                    stop: 0 rgba(124, 58, 237, 130), stop: 1 rgba(124, 58, 237, 0)); }
+            #phoneFrame { background-color: #121219; border: 3px solid #2D2D44; border-radius: 22px; }
+            #prompt { background-color: #1A1A2E; border: 2px solid #7C3AED; border-radius: 12px; }
+            #promptText { font-size: 9px; font-weight: 700; }
+            #fakeDeny { background-color: #2D2D44; border-radius: 5px; }
+            #fakeAllow { background-color: #7C3AED; border-radius: 5px; }
             QLineEdit {
-                background-color: #16162A;
-                border: 1px solid #3D3D5C;
-                border-radius: 6px;
-                padding: 6px 10px;
-                color: #FFFFFF;
-                font-family: 'JetBrains Mono', 'Fira Code', monospace;
-                font-size: 13px;
+                background-color: #121219;
+                border: 1px solid #2D2D44;
+                border-radius: 8px;
+                padding: 0 12px;
+                color: #F3F4F6;
+                font-family: '%s';
+                font-size: 14px;
                 selection-background-color: #7C3AED;
             }
-            QLineEdit:focus {
-                border-color: #7C3AED;
-            }
-            #scanBtn {
-                background-color: #2D2D44;
-                border: 1px solid #3D3D5C;
-                border-radius: 6px;
-                padding: 7px 8px;
-                color: #D1D5DB;
-                font-size: 12px;
-            }
-            #scanBtn:hover {
-                background-color: #3D3D5C;
-            }
-            #scanBtn:disabled {
-                color: #6B7280;
-            }
-            #shortcutsBtn {
-                background: transparent;
-                border: none;
-                color: #9CA3AF;
-                font-size: 12px;
-                padding: 0 6px;
-            }
-            #shortcutsBtn:hover {
-                color: #FFFFFF;
-            }
-            #connectBtn {
-                background-color: #7C3AED;
-                border: none;
-                border-radius: 6px;
-                padding: 7px 16px;
-                color: #FFFFFF;
-                font-weight: bold;
-                font-size: 13px;
-            }
-            #connectBtn:hover {
-                background-color: #6D28D9;
-            }
-            #connectBtn:pressed {
-                background-color: #5B21B6;
-            }
-            QCheckBox {
-                color: #D1D5DB;
-                font-size: 13px;
-                spacing: 6px;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border-radius: 3px;
-                border: 1px solid #3D3D5C;
-                background-color: #16162A;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #7C3AED;
-                border-color: #7C3AED;
-            }
-            QStatusBar {
-                background-color: #111122;
-                border-top: 1px solid #2D2D44;
-                color: #9CA3AF;
-                font-size: 12px;
-                padding: 2px 8px;
-            }
-            QStatusBar QLabel {
-                font-size: 12px;
-                padding: 0 8px;
-            }
-            QToolTip {
-                background-color: #1A1A2E;
-                color: #FFFFFF;
-                border: 1px solid #3D3D5C;
-            }
-        """)
+            QLineEdit:focus { border-color: #7C3AED; }
+            QPushButton { font-size: 13px; font-weight: 700; color: #F3F4F6; }
+            #primary { background-color: #7C3AED; border: none; border-radius: 8px; padding: 0 16px; color: #FFFFFF; }
+            #primary:hover { background-color: #6D28D9; }
+            #primary:pressed { background-color: #5B21B6; }
+            #secondary { background-color: #1A1A2E; border: 1px solid #2D2D44; border-radius: 8px; }
+            #secondary:hover { background-color: #23233A; }
+            #ghost { background: transparent; border: 1px solid #2D2D44; border-radius: 8px; padding: 0 10px;
+                     color: #D1D5DB; font-size: 12px; font-weight: 600; }
+            #ghost:hover { background-color: #1A1A2E; }
+            #ghost:disabled { color: #6B7280; }
+            #link, #linkSmall { background: transparent; border: none; padding: 0; color: #A78BFA;
+                                font-size: 12px; font-weight: 600; }
+            #linkSmall { font-size: 11px; }
+            #link:hover, #linkSmall:hover { color: #C4B5FD; }
+            #pill { background-color: rgba(124, 58, 237, 46); border: none; border-radius: 12px;
+                    padding: 0 10px 0 8px; color: #B8A6F7; font-size: 11px; font-weight: 700; }
+            QToolButton { background: transparent; border: none; border-radius: 8px; color: #D1D5DB;
+                          font-size: 11px; font-weight: 600; }
+            QToolButton:hover { background-color: #1A1A2E; }
+            QToolButton:checked { background-color: rgba(124, 58, 237, 46); }
+            #switch::indicator { width: 44px; height: 26px; image: url(%s); }
+            #switch::indicator:checked { image: url(%s); }
+            QToolTip { background-color: #1A1A2E; color: #FFFFFF; border: 1px solid #3D3D5C; }
+        """ % (mono, mono, off, on))
+
+    def _set_status(self, text: str, color: str = GREEN):
+        self.status_label.setText(f"<span style='color:{color}'>●</span>&nbsp; {html.escape(text)}")
+
+    def _set_pill(self, text: str, reconnecting: bool):
+        self.live_pill.setText(text)
+        self.live_pill.setProperty("reconnecting", reconnecting)
+        self.live_pill.style().unpolish(self.live_pill)  # QSS property selectors only re-match on polish
+        self.live_pill.style().polish(self.live_pill)
+
+    def _set_device(self, name: str, addr: str = ""):
+        self.wait_name.setText(name)
+        self.mirror_name.setText(name)
+        self.wait_body.setText(f"A request is showing on {name}. Nothing is streamed until you allow it there.")
+        if addr:
+            self.wait_addr.setText(addr)
+            self.mirror_addr.setText(addr)
 
     # ── Connection handlers ──
 
     def _on_connect_clicked(self):
-        if not self.connected:
-            ip = self.ip_input.text().strip()
-            port = self.port_input.text().strip() or "8765"
-            if not ip:
-                self.status_label.setText("⚠ Enter the phone's IP address")
-                return
-            url = f"wss://{ip}:{port}"
-            self.status_label.setText(f"Connecting to {url}...")
-            self.connect_btn.setText("Cancel")
-            self.ws_client.connect_to(url)
-        else:
-            self.ws_client.disconnect()
+        if self._connecting:
+            self._disconnect()
+            return
+        ip = self.ip_input.text().strip()
+        if not ip:
+            self._set_status("Enter the phone's IP address", RED)
+            return
+        self._connect(ip)
+
+    def _connect(self, ip: str, name: str = ""):
+        port = self.port_input.text().strip() or "8765"
+        self.ip_input.setText(ip)
+        self._set_device(name or ip, f"{ip} · {port}")
+        self._connecting = True
+        self.connect_btn.setText("Cancel")
+        self._set_status(f"Connecting to {ip}:{port}...", AMBER)
+        self.ws_client.connect_to(f"wss://{ip}:{port}")
+
+    def _disconnect(self):
+        self.ws_client.disconnect()
+        self._on_disconnected(True)  # between retries the client has no socket to report the close
 
     def _on_connected(self):
         self.connected = True
         QSettings().setValue("last_ip", self.ip_input.text().strip())
-        self.connect_btn.setText("Disconnect")
-        self.status_label.setText("● Connected")
+        self._set_status("Connected, waiting for the phone...", AMBER)
         self.decoder.start()
 
     def _on_disconnected(self, clean: bool = False):
         was_connected = self.connected
         self.connected = False
-        self.fps_label.setText("")
         self.decoder.stop()
         self.audio_player.stop()
         self.input_handler.reset()
         self.video_widget._pressing = False
-        if was_connected and not clean:
-            self.status_label.setText("Connection lost — reconnecting...")
-            self.connect_btn.setText("Cancel")
-        else:
-            self.connect_btn.setText("Connect")
-            self.status_label.setText("Disconnected")
-            self.device_label.setText("")
-            self.resolution_label.setText("")
-            self.audio_checkbox.setEnabled(False)
-            self.audio_checkbox.setChecked(False)
-            self.video_widget.image = None
-            self.video_widget.hint = _IDLE_HINT
-            self.video_widget.update()
-            self.setWindowTitle("RemotePhone")
+        if not clean:  # the client keeps retrying
+            if was_connected:
+                self._set_status("Connection lost, reconnecting...", AMBER)
+                self._set_pill(f"<span style='color:{AMBER}'>●</span>&nbsp;Reconnecting", True)
+            return
+        self._connecting = False
+        self.connect_btn.setText("Connect to address")
+        self._set_status("Disconnected", "#6B7280")
+        self.stack.setCurrentWidget(self.connect_page)
+        self._resolution = ""
+        self.stats_label.setText("")
+        self.audio_btn.setChecked(False)
+        self.audio_btn.setEnabled(False)
+        self.video_widget.image = None
+        self.video_widget.update()
+        self.setWindowTitle("RemotePhone")
 
     def _on_reconnecting(self, attempt: int):
-        self.status_label.setText(f"Reconnecting... (attempt {attempt})")
+        self._set_status(f"Reconnecting... (attempt {attempt})", AMBER)
 
     def _on_info_received(self, info: dict):
         device = info.get("device", "Unknown")
@@ -477,31 +765,33 @@ class MainWindow(QMainWindow):
         sh = info.get("screenHeight", 0)
         android_ver = info.get("androidVersion", "?")
 
-        self.device_label.setText(f"{device}")
-        self.resolution_label.setText(f"{sw}×{sh}")
-        self.setWindowTitle(f"RemotePhone — {device} (Android {android_ver})")
+        self._set_device(device)
+        self._resolution = f"{sw} × {sh}"
+        self.setWindowTitle(f"RemotePhone · {device} (Android {android_ver})")
 
         if info.get("audioAvailable", False):
-            self.audio_checkbox.setEnabled(True)
+            self.audio_btn.setEnabled(True)
         self.input_handler.live = bool(info.get("liveTouch"))
 
     def _on_approval(self, state: str):
         if state == "pending":
-            self.status_label.setText("Waiting for approval on the phone...")
-            self.video_widget.hint = _APPROVAL_HINT
+            self._set_status("Waiting for approval on the phone...", AMBER)
+            self.stack.setCurrentWidget(self.wait_page)
         elif state == "granted":
-            self.status_label.setText("● Connected")
-            self.video_widget.hint = _IDLE_HINT
-        self.video_widget.update()
+            self._show_mirror()
+
+    def _show_mirror(self):
+        self._set_status("Connected")
+        self._set_pill(f"<span style='color:{GREEN}'>●</span>&nbsp;Live", False)
+        self.stack.setCurrentWidget(self.mirror_page)
+        self.video_widget.setFocus()
 
     def _on_clipboard_received(self, content: str):
         QApplication.clipboard().setText(content)
-        self.status_label.setText(f"Copied to clipboard ({len(content)} chars)")
+        self.stats_label.setText(f"Copied to clipboard ({len(content)} chars)")
 
     def _on_error(self, error: str):
-        self.status_label.setText(f"⚠ {error}")
-        if not self.connected:
-            self.connect_btn.setText("Connect")
+        self._set_status(error, RED)
 
     # ── Network scan ──
 
@@ -511,33 +801,56 @@ class MainWindow(QMainWindow):
 
     def _on_scan_started(self):
         self.scan_btn.setEnabled(False)
-        self.scan_btn.setText("...")
-        self.ip_input.setPlaceholderText("Scanning...")
+        self.scan_btn.setText("Scanning...")
         if not self.connected:
-            self.status_label.setText("Scanning local network...")
+            self._set_status("Scanning local network...", AMBER)
 
     def _on_scan_complete(self, found: list):
         self.scan_btn.setEnabled(True)
-        self.scan_btn.setText("Scan")
-        self.ip_input.setPlaceholderText("Phone IP address")
+        self.scan_btn.setText("Scan again")
+        while self.phone_list.count():
+            self.phone_list.takeAt(0).widget().deleteLater()
+        port = self.port_input.text().strip() or "8765"
+        for ip, name in found:
+            card, row = _frame("card", QHBoxLayout, (16, 14, 16, 14), 14)
+            tile = QLabel()
+            tile.setObjectName("tile")
+            tile.setFixedSize(40, 40)
+            tile.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            tile.setPixmap(_icon("phone").pixmap(20, 20))
+            text = QVBoxLayout()
+            text.setSpacing(3)
+            text.addWidget(_label(name, "cardName"))
+            text.addWidget(_label(f"{ip} · port {port}", "mono"))
+            btn = _button("Connect", "primary", 36)
+            btn.clicked.connect(lambda _, i=ip, n=name: self._connect(i, n))
+            row.addWidget(tile)
+            row.addLayout(text, 1)
+            row.addWidget(btn)
+            self.phone_list.addWidget(card)
         if found:
-            self.ip_input.setText(found[0])
+            self.ip_input.setText(found[0][0])
         if self.connected:
             return
 
         if len(found) == 1:
-            # Exactly one server found — auto-connect
-            self.status_label.setText(f"Found phone at {found[0]}")
-            self._on_connect_clicked()
+            # Exactly one server found, auto-connect
+            self._set_status(f"Found {found[0][1]} at {found[0][0]}")
+            self._connect(*found[0])
         elif found:
-            # Multiple found — first is filled in, let user pick. Cap the listed IPs so a long
-            # result set can't stretch the status bar (and the window) arbitrarily wide.
-            shown = ", ".join(found[:3])
-            if len(found) > 3:
-                shown += f", +{len(found) - 3} more"
-            self.status_label.setText(f"Found {len(found)} devices: {shown}")
+            self._set_status(f"Found {len(found)} phones")
         else:
-            self.status_label.setText("No phone found — enter IP manually")
+            self._set_status("No phone found, enter the address below", "#6B7280")
+
+    # ── Update check ──
+
+    def _check_update(self):
+        try:
+            with urllib.request.urlopen(PYPI_URL, timeout=3) as reply:
+                if is_newer(json.load(reply)["info"]["version"], VERSION):
+                    self.update_found.emit()
+        except Exception:
+            pass  # offline, no PyPI, or a version that is not plain dotted ints
 
     # ── Frame routing ──
 
@@ -565,7 +878,7 @@ class MainWindow(QMainWindow):
 
     def _update_fps(self):
         if self.connected:
-            self.fps_label.setText(f"{self.frame_count} FPS")
+            self.stats_label.setText(f"{self._resolution} · {self.frame_count} fps")
             self.frame_count = 0
 
     # ── Input handlers ──
@@ -584,12 +897,15 @@ class MainWindow(QMainWindow):
         if cmd:
             self._send_command(cmd)
         elif event.key() == Qt.Key.Key_F11:
-            if self.isFullScreen():
-                self.showNormal()
-            else:
-                self.showFullScreen()
+            self._toggle_fullscreen()
         else:
             super().keyPressEvent(event)
+
+    def _toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
 
     def _send_command(self, cmd: dict):
         if self.connected:

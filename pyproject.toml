@@ -42,7 +42,7 @@ Issues = "https://github.com/dpk404/remote-phone/issues"
 remotephone = "remotephone.main:main"
 
 [tool.setuptools.package-data]
-remotephone = ["assets/*"]
+remotephone = ["assets/*", "assets/icons/*"]
 
 [tool.setuptools.packages.find]
 where = ["."]

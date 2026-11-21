@@ -13,7 +13,8 @@ ARCH=$(uname -m)
 python3 -m PyInstaller --noconfirm --windowed \
     --name RemotePhone \
     --icon "$ROOT/remotephone/assets/icon.icns" \
-    --add-data "$ROOT/remotephone/assets:assets" \
+    --add-data "$ROOT/remotephone/assets:remotephone/assets" \
+    --copy-metadata remote-phone \
     --osx-bundle-identifier com.remotephone.desktop \
     --specpath build \
     remotephone/main.py

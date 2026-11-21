@@ -9,316 +9,422 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:gravity="center_horizontal"
-        android:padding="24dp">
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="24dp">
 
-        <!-- App Title -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="RemotePhone"
-            android:textSize="32sp"
-            android:textColor="@color/text_primary"
-            android:textStyle="bold"
-            android:layout_marginTop="48dp" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Mirror &amp; Control"
-            android:textSize="14sp"
-            android:textColor="@color/text_hint"
-            android:layout_marginTop="4dp" />
-
-        <!-- Connection Info Card -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="@drawable/card_background"
-            android:padding="20dp"
-            android:layout_marginTop="40dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="CONNECTION INFO"
-                android:textSize="11sp"
-                android:textColor="@color/text_hint"
-                android:letterSpacing="0.15" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginTop="16dp">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="IP Address"
-                        android:textSize="12sp"
-                        android:textColor="@color/text_muted" />
-
-                    <TextView
-                        android:id="@+id/ipText"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="..."
-                        android:textSize="20sp"
-                        android:textColor="@color/text_primary"
-                        android:textStyle="bold"
-                        android:fontFamily="monospace"
-                        android:layout_marginTop="4dp" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:gravity="end">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Port"
-                        android:textSize="12sp"
-                        android:textColor="@color/text_muted" />
-
-                    <TextView
-                        android:id="@+id/portText"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="8765"
-                        android:textSize="20sp"
-                        android:textColor="@color/text_primary"
-                        android:textStyle="bold"
-                        android:fontFamily="monospace"
-                        android:layout_marginTop="4dp" />
-                </LinearLayout>
-            </LinearLayout>
-        </LinearLayout>
-
-        <!-- Status Card -->
+        <!-- Header -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:background="@drawable/card_background"
-            android:padding="16dp"
-            android:layout_marginTop="16dp">
+            android:gravity="center_vertical">
+
+            <ImageView
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:src="@drawable/ic_brand"
+                android:importantForAccessibility="no" />
 
             <TextView
-                android:id="@+id/statusDot"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="○"
-                android:textSize="18sp"
-                android:textColor="@color/text_muted" />
-
-            <TextView
-                android:id="@+id/statusText"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Ready to stream"
-                android:textSize="14sp"
-                android:textColor="@color/text_secondary"
-                android:layout_marginStart="12dp" />
+                android:layout_marginStart="12dp"
+                android:text="RemotePhone"
+                android:textSize="20sp"
+                style="@style/Title"
+                android:letterSpacing="-0.01" />
+
+            <ImageButton
+                android:id="@+id/settingsButton"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="@drawable/button_icon"
+                android:foreground="?android:attr/selectableItemBackground"
+                android:src="@drawable/ic_settings"
+                android:tint="@color/text_secondary"
+                android:contentDescription="Settings" />
         </LinearLayout>
 
-        <!-- Connection Requests Card (shown while a computer waits for an answer) -->
+        <!-- Hero: start, or who is watching and stop -->
+        <LinearLayout
+            style="@style/Card"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="22dp"
+            android:paddingBottom="20dp">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <View
+                    android:id="@+id/statusDot"
+                    android:layout_width="8dp"
+                    android:layout_height="8dp"
+                    android:background="@drawable/rounded"
+                    android:backgroundTint="@color/dot_idle" />
+
+                <TextView
+                    android:id="@+id/statusText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="Not mirroring"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_muted" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/heroTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="Ready when you are"
+                android:textSize="26sp"
+                style="@style/Title"
+                android:letterSpacing="-0.02" />
+
+            <TextView
+                android:id="@+id/heroBody"
+                style="@style/Body"
+                android:layout_marginTop="6dp"
+                android:text="Start, then connect from your computer on the same Wi-Fi."
+                android:textSize="14sp"
+                android:textColor="@color/text_secondary" />
+
+            <LinearLayout
+                android:id="@+id/watchersList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:orientation="vertical"
+                android:background="@drawable/card_inset"
+                android:showDividers="middle"
+                android:divider="@drawable/divider"
+                android:dividerPadding="14dp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/severalCaption"
+                style="@style/Body"
+                android:layout_marginTop="12dp"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/startButton"
+                style="@style/Btn"
+                android:layout_height="56dp"
+                android:layout_marginTop="18dp"
+                android:text="Start mirroring"
+                android:textSize="16sp"
+                android:textColor="#FFFFFFFF"
+                android:background="@drawable/button_primary" />
+        </LinearLayout>
+
+        <!-- Connection request, the oldest one first -->
         <LinearLayout
             android:id="@+id/requestsCard"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="@drawable/card_background"
-            android:padding="16dp"
-            android:layout_marginTop="16dp"
+            style="@style/Card"
+            android:padding="20dp"
+            android:background="@drawable/card_request"
             android:visibility="gone">
 
             <TextView
+                style="@style/Label"
+                android:text="CONNECTION REQUEST"
+                android:textColor="@color/accent_text" />
+
+            <TextView
+                android:id="@+id/requestTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="CONNECTION REQUESTS"
-                android:textSize="11sp"
-                android:textColor="@color/status_amber"
-                android:letterSpacing="0.15" />
+                android:layout_marginTop="12dp"
+                android:textSize="19sp"
+                style="@style/Title"
+                android:letterSpacing="-0.01" />
+
+            <TextView
+                android:id="@+id/requestAddress"
+                style="@style/Mono"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textSize="13sp"
+                android:textColor="@color/text_secondary" />
+
+            <TextView
+                style="@style/Body"
+                android:layout_marginTop="12dp"
+                android:text="It will see and control this screen until you stop mirroring."
+                android:textColor="@color/text_secondary" />
 
             <LinearLayout
-                android:id="@+id/requestsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/denyButton"
+                    style="@style/Btn"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="Deny"
+                    android:fontFamily="sans-serif-medium"
+                    android:textStyle="normal"
+                    android:textColor="@color/text_primary"
+                    android:background="@drawable/button_deny" />
+
+                <Button
+                    android:id="@+id/allowButton"
+                    style="@style/Btn"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="10dp"
+                    android:text="Allow"
+                    android:textColor="#FFFFFFFF"
+                    android:background="@drawable/button_primary" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/Body"
+                android:layout_marginTop="12dp"
+                android:text="No answer within a minute closes it. Remembering computers is in Settings."
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- Address, large while nobody is watching -->
+        <LinearLayout
+            android:id="@+id/connectCard"
+            style="@style/Card"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="18dp"
+            android:paddingBottom="18dp">
+
+            <TextView
+                style="@style/Label"
+                android:text="CONNECT FROM YOUR COMPUTER" />
+
+            <TextView
+                android:id="@+id/ipText"
+                style="@style/Mono"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="..."
+                android:textSize="34sp"
+                android:letterSpacing="-0.01"
+                android:textIsSelectable="true" />
+
+            <TextView
+                android:id="@+id/portText"
+                style="@style/Body"
+                android:layout_marginTop="10dp" />
+        </LinearLayout>
+
+        <!-- Address, compact while mirroring to someone -->
+        <LinearLayout
+            android:id="@+id/addressCard"
+            style="@style/Card"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="14dp"
+            android:paddingBottom="14dp"
+            android:visibility="gone">
+
+            <TextView
+                style="@style/Label"
+                android:text="YOUR ADDRESS" />
+
+            <TextView
+                android:id="@+id/addressText"
+                style="@style/Mono"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:textSize="24sp" />
+        </LinearLayout>
+
+        <!-- Setup -->
+        <LinearLayout
+            android:id="@+id/setupCard"
+            style="@style/Card"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp">
+
+            <TextView
+                style="@style/Label"
+                android:layout_marginStart="20dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="4dp"
+                android:text="SETUP" />
+
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:layout_marginTop="8dp" />
+                android:showDividers="middle|end"
+                android:divider="@drawable/divider"
+                android:dividerPadding="20dp">
+
+                <LinearLayout
+                    android:id="@+id/accessibilityRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="60dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:background="?android:attr/selectableItemBackground">
+
+                    <ImageView
+                        android:id="@+id/accessibilityIcon"
+                        style="@style/Tile"
+                        android:src="@drawable/ic_hand"
+                        android:importantForAccessibility="no" />
+
+                    <LinearLayout style="@style/TextColumn">
+
+                        <TextView
+                            style="@style/Title"
+                            android:text="Remote control" />
+
+                        <TextView
+                            android:id="@+id/accessibilityStatus"
+                            style="@style/Body"
+                            android:layout_marginTop="2dp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/accessibilityChip"
+                        android:layout_width="wrap_content"
+                        android:layout_height="26dp"
+                        android:layout_marginStart="10dp"
+                        android:gravity="center"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:drawablePadding="5dp"
+                        android:background="@drawable/rounded"
+                        android:textSize="12sp" />
+
+                    <ImageView
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:layout_marginStart="8dp"
+                        android:src="@drawable/ic_chevron"
+                        android:importantForAccessibility="no" />
+                </LinearLayout>
+
+                <!-- Android 12 and older only -->
+                <LinearLayout
+                    android:id="@+id/keyboardCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="60dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:background="?android:attr/selectableItemBackground">
+
+                    <ImageView
+                        android:id="@+id/keyboardIcon"
+                        style="@style/Tile"
+                        android:src="@drawable/ic_keyboard"
+                        android:importantForAccessibility="no" />
+
+                    <LinearLayout style="@style/TextColumn">
+
+                        <TextView
+                            style="@style/Title"
+                            android:text="Remote typing" />
+
+                        <TextView
+                            android:id="@+id/keyboardStatus"
+                            style="@style/Body"
+                            android:layout_marginTop="2dp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/keyboardChip"
+                        android:layout_width="wrap_content"
+                        android:layout_height="26dp"
+                        android:layout_marginStart="10dp"
+                        android:gravity="center"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:drawablePadding="5dp"
+                        android:background="@drawable/rounded"
+                        android:textSize="12sp" />
+
+                    <ImageView
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:layout_marginStart="8dp"
+                        android:src="@drawable/ic_chevron"
+                        android:importantForAccessibility="no" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/setupCaption"
+                style="@style/Body"
+                android:layout_marginStart="20dp"
+                android:layout_marginEnd="20dp"
+                android:layout_marginTop="10dp"
+                android:layout_marginBottom="8dp"
+                android:textSize="12sp" />
         </LinearLayout>
 
-        <!-- Audio Toggle Card -->
+        <!-- Audio -->
         <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            style="@style/Card"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:background="@drawable/card_background"
-            android:padding="16dp"
-            android:layout_marginTop="16dp">
+            android:paddingTop="16dp"
+            android:paddingBottom="16dp"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp">
 
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical">
+            <ImageView
+                style="@style/Tile"
+                android:src="@drawable/ic_volume"
+                android:backgroundTint="@color/inset_bg"
+                android:tint="@color/text_secondary"
+                android:importantForAccessibility="no" />
+
+            <LinearLayout style="@style/TextColumn">
 
                 <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Audio Mirroring"
-                    android:textSize="14sp"
-                    android:textColor="@color/text_secondary" />
+                    style="@style/Title"
+                    android:text="Mirror audio too" />
 
                 <TextView
                     android:id="@+id/audioSubtext"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Streams phone audio to PC"
-                    android:textSize="11sp"
-                    android:textColor="@color/text_hint"
+                    style="@style/Body"
                     android:layout_marginTop="2dp" />
             </LinearLayout>
 
             <Switch
                 android:id="@+id/audioToggle"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:contentDescription="Mirror audio too" />
         </LinearLayout>
-
-        <!-- Start/Stop Button -->
-        <Button
-            android:id="@+id/startButton"
-            android:layout_width="match_parent"
-            android:layout_height="56dp"
-            android:layout_marginTop="32dp"
-            android:text="Start Mirroring"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="@color/text_primary"
-            android:background="@drawable/button_primary" />
-
-        <!-- Accessibility Service Card -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="@drawable/card_background"
-            android:padding="16dp"
-            android:layout_marginTop="24dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="REMOTE CONTROL SETUP"
-                android:textSize="11sp"
-                android:textColor="@color/text_hint"
-                android:letterSpacing="0.15" />
-
-            <TextView
-                android:id="@+id/accessibilityStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Accessibility Service: Not enabled"
-                android:textSize="13sp"
-                android:textColor="@color/status_amber"
-                android:layout_marginTop="8dp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Enable RemotePhone in Settings → Accessibility to allow remote touch control from your computer."
-                android:textSize="12sp"
-                android:textColor="@color/text_muted"
-                android:layout_marginTop="4dp" />
-
-            <Button
-                android:id="@+id/accessibilityButton"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
-                android:text="Open Accessibility Settings"
-                android:textSize="12sp"
-                android:textColor="@color/accent_blue"
-                android:background="@android:color/transparent"
-                android:layout_marginTop="8dp"
-                android:paddingStart="0dp"
-                android:paddingEnd="0dp" />
-        </LinearLayout>
-
-        <!-- Keyboard Setup Card (Android 12 and older only) -->
-        <LinearLayout
-            android:id="@+id/keyboardCard"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="@drawable/card_background"
-            android:padding="16dp"
-            android:layout_marginTop="16dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="REMOTE TYPING SETUP"
-                android:textSize="11sp"
-                android:textColor="@color/text_hint"
-                android:letterSpacing="0.15" />
-
-            <TextView
-                android:id="@+id/keyboardStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="RemotePhone Keyboard: not enabled"
-                android:textSize="13sp"
-                android:textColor="@color/status_amber"
-                android:layout_marginTop="8dp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Select the RemotePhone Keyboard while mirroring so desktop typing works in every app, including browser pages."
-                android:textSize="12sp"
-                android:textColor="@color/text_muted"
-                android:layout_marginTop="4dp" />
-
-            <Button
-                android:id="@+id/keyboardButton"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
-                android:text="Enable RemotePhone Keyboard"
-                android:textSize="12sp"
-                android:textColor="@color/accent_blue"
-                android:background="@android:color/transparent"
-                android:layout_marginTop="8dp"
-                android:paddingStart="0dp"
-                android:paddingEnd="0dp" />
-        </LinearLayout>
-
-        <View
-            android:layout_width="1dp"
-            android:layout_height="48dp" />
-
-        <Button
-            android:id="@+id/settingsButton"
-            style="?android:attr/borderlessButtonStyle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="Settings"
-            android:textColor="@color/accent_blue" />
 
     </LinearLayout>
 </ScrollView>

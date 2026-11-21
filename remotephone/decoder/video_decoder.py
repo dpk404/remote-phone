@@ -1,5 +1,5 @@
 """
-RemotePhone — H.264 Video Decoder
+RemotePhone: H.264 Video Decoder
 Decodes H.264 NAL units from the phone into QImage frames using PyAV (FFmpeg).
 Runs a decode loop in a background thread with aggressive frame dropping for
 minimal latency real-time display.
@@ -203,6 +203,6 @@ class VideoDecoder(QObject):
             for _ in range(last_key_idx):
                 self._frame_queue.popleft()
             return dropped
-        # No keyframe in queue — don't drop delta frames, they need
+        # No keyframe in queue: don't drop delta frames, they need
         # sequential decoding. Just let the decoder catch up.
         return 0

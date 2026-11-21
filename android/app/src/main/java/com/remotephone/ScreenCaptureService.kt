@@ -68,8 +68,12 @@ class ScreenCaptureService : Service() {
             instance?.setAudioEnabled(enabled)
         }
 
-        /** Addresses of the clients currently watching, or null when not mirroring. */
-        fun clients(): List<String>? = instance?.takeIf { it.isRunning }?.webSocketServer?.clientAddresses()
+        /** The computers currently watching, or null when not mirroring. */
+        fun watchers(): List<MirrorWebSocketServer.Watcher>? = instance?.takeIf { it.isRunning }?.webSocketServer?.watchers()
+
+        fun disconnect(id: String) {
+            instance?.webSocketServer?.disconnect(id)
+        }
 
         /** Computers waiting for the owner's answer; empty when not mirroring. */
         fun pendingRequests(): List<MirrorWebSocketServer.PendingRequest> =
@@ -80,7 +84,7 @@ class ScreenCaptureService : Service() {
         }
 
         /** Set by the activity while visible; called on the main thread when watchers or requests change. */
-        @Volatile var onClientsChanged: ((List<String>) -> Unit)? = null
+        @Volatile var onClientsChanged: ((List<MirrorWebSocketServer.Watcher>) -> Unit)? = null
     }
 
     private fun answer(id: String, allow: Boolean) {
@@ -93,9 +97,9 @@ class ScreenCaptureService : Service() {
     // Runs on the main thread whenever the watchers or requests change
     private val publishClients = Runnable {
         if (!isRunning) return@Runnable
-        val clients = webSocketServer?.clientAddresses() ?: emptyList()
-        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(clients))
-        onClientsChanged?.invoke(clients)
+        val watchers = webSocketServer?.watchers() ?: emptyList()
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(watchers.map { MirrorWebSocketServer.displayName(it.name).ifBlank { it.address } }))
+        onClientsChanged?.invoke(watchers)
     }
 
     // Video

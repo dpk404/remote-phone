@@ -1,5 +1,5 @@
 """
-RemotePhone — Input Handler
+RemotePhone: Input Handler
 Translates mouse and keyboard events from the Linux client into
 the JSON control protocol for the Android phone.
 

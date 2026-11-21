@@ -6,9 +6,8 @@ Mirror and control your Android phone from your Linux desktop.
 
 import sys
 import logging
-from pathlib import Path
 
-# Default to WARNING — only show errors and important messages
+# Default to WARNING: only show errors and important messages
 # Use --verbose or -v flag for debug output
 _verbose = '--verbose' in sys.argv or '-v' in sys.argv
 if _verbose:
@@ -22,9 +21,10 @@ logging.basicConfig(
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QFont, QIcon
-from remotephone.ui.main_window import MainWindow
+from remotephone.ui.main_window import ICONS, MainWindow
 
-ASSETS = Path(__file__).resolve().parent / "assets"
+# Not this file's folder: in the macOS bundle the entry script sits outside the package
+ASSETS = ICONS.parent
 
 
 def app_icon() -> QIcon:
@@ -44,8 +44,8 @@ def main():
     app.setWindowIcon(app_icon())
     app.setStyle("Fusion")
 
-    # Use a clean sans-serif font
-    font = QFont("Inter", 10)
+    font = app.font()
+    font.setPointSize(10)
     font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     app.setFont(font)
 

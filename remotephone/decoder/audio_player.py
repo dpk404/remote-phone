@@ -1,5 +1,5 @@
 """
-RemotePhone — Audio Player
+RemotePhone: Audio Player
 Plays raw PCM audio received from the phone using sounddevice.
 Audio format: 16-bit signed LE, 44100 Hz, stereo.
 """
@@ -7,7 +7,7 @@ Audio format: 16-bit signed LE, 44100 Hz, stereo.
 import queue
 import threading
 
-# sounddevice is optional — audio is silently disabled if it (or PortAudio) is missing
+# sounddevice is optional: audio is silently disabled if it (or PortAudio) is missing
 try:
     import sounddevice as sd
 except (ImportError, OSError):

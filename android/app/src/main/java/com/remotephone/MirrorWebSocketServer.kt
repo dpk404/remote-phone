@@ -40,10 +40,17 @@ class MirrorWebSocketServer(
         const val CLOSE_REJECTED = 1008
         /** Frames queued for one client before it counts as behind; a keyframe still draining is far below this. */
         private const val MAX_QUEUED_FRAMES = 8
+
+        /** The computer's own name, without the prefix the RemotePhone clients put in their hello. */
+        fun displayName(name: String) = name.removePrefix("RemotePhone Web on ").removePrefix("RemotePhone on ")
+        fun isBrowser(name: String) = name.startsWith("RemotePhone Web on ")
     }
 
     /** A computer waiting for the owner's answer. */
     data class PendingRequest(val id: String, val name: String, val address: String)
+
+    /** A computer the owner allowed and that is receiving video, since [since] (epoch millis). */
+    data class Watcher(val id: String, val name: String, val address: String, val since: Long)
 
     // The current group of pictures (SPS/PPS, last keyframe, deltas since) so a new client
     // decodes the latest picture at once instead of waiting for the next keyframe, which a
@@ -54,7 +61,7 @@ class MirrorWebSocketServer(
     private val lock = Any()
     private var videoConfigFrame: ByteArray? = null
     private val gop = ArrayList<ByteArray>()
-    private val ready = HashMap<WebSocket, String>()  // watching connections and their identity
+    private val ready = HashMap<WebSocket, Watcher>()
     private val stale = HashSet<WebSocket>()  // fell behind and had frames skipped: no deltas until a keyframe
 
     // Consent: video and control flow only to computers the owner allowed, for the mirroring
@@ -64,7 +71,7 @@ class MirrorWebSocketServer(
     // network can inherit the access. A computer waiting for the owner is parked in [pending]
     // with its timeout, one proving itself in [awaitingAuth]. All guarded by [lock].
     private class Request(val conn: WebSocket, val name: String, val address: String, val timeout: Runnable)
-    private class Auth(val id: String, val nonce: String, val secret: String)
+    private class Auth(val id: String, val name: String, val nonce: String, val secret: String)
     private val approved = HashMap<String, String>()  // id to secret, this session
     private val pending = HashMap<String, Request>()
     private val awaitingAuth = HashMap<WebSocket, Auth>()
@@ -89,9 +96,16 @@ class MirrorWebSocketServer(
         Log.i(TAG, "Client disconnected: ${conn.remoteSocketAddress} (code=$code)")
     }
 
-    /** Addresses of the clients the owner allowed and that are receiving video. */
-    fun clientAddresses(): List<String> = synchronized(lock) {
-        ready.keys.mapNotNull { it.remoteSocketAddress?.address?.hostAddress }
+    fun watchers(): List<Watcher> = synchronized(lock) { ready.values.sortedBy { it.since } }
+
+    /** Ends [id]'s connections with a normal close, which the desktop client does not retry,
+     *  and drops its Allow for this session so a reconnect asks again. */
+    fun disconnect(id: String) {
+        val conns = synchronized(lock) {
+            approved.remove(id)
+            ready.filterValues { it.id == id }.keys.toList()
+        }
+        conns.forEach { it.close(1000, "Disconnected on the phone") }
     }
 
     /** Computers waiting for the owner's answer. */
@@ -150,7 +164,7 @@ class MirrorWebSocketServer(
             return
         }
         if (!Prefs.ask(context)) {
-            grant(conn, id, null)  // confirmation switched off: everyone on the network may watch
+            grant(conn, id, name, null)  // confirmation switched off: everyone on the network may watch
             return
         }
         val timeout = Runnable { deny(id, "No answer on the phone") }
@@ -166,7 +180,7 @@ class MirrorWebSocketServer(
             known
         }
         if (secret != null) {
-            challenge(conn, id, secret)
+            challenge(conn, id, name, secret)
             return
         }
         conn.send(approvalJson("pending"))
@@ -177,7 +191,7 @@ class MirrorWebSocketServer(
 
     /** With several computers disallowed, only the computer already watching may (re)connect. */
     private fun roomFor(id: String): Boolean = Prefs.multiple(context) ||
-        synchronized(lock) { ready.values.all { it == id } }
+        synchronized(lock) { ready.values.all { it.id == id } }
 
     private fun approvalJson(state: String, secret: String? = null): String =
         JSONObject().put("type", "approval").put("state", state).apply { secret?.let { put("secret", it) } }.toString()
@@ -185,9 +199,9 @@ class MirrorWebSocketServer(
     private fun randomHex(): String = ByteArray(32).also { random.nextBytes(it) }.joinToString("") { "%02x".format(it) }
 
     /** A known computer must prove it holds the secret, bound to the certificate it connected to. */
-    private fun challenge(conn: WebSocket, id: String, secret: String) {
+    private fun challenge(conn: WebSocket, id: String, name: String, secret: String) {
         val nonce = randomHex()
-        synchronized(lock) { awaitingAuth[conn] = Auth(id, nonce, secret) }
+        synchronized(lock) { awaitingAuth[conn] = Auth(id, name, nonce, secret) }
         conn.send(JSONObject().put("type", "challenge").put("nonce", nonce).toString())
     }
 
@@ -198,7 +212,7 @@ class MirrorWebSocketServer(
             doFinal("${auth.nonce}|${Tls.fingerprintHex()}".toByteArray())
         }.joinToString("") { "%02x".format(it) }
         if (MessageDigest.isEqual(expected.toByteArray(), mac.lowercase().toByteArray())) {
-            grant(conn, auth.id, null)
+            grant(conn, auth.id, auth.name, null)
         } else {
             Log.w(TAG, "Client ${auth.id} failed authentication")
             conn.close(CLOSE_REJECTED, "Authentication failed")
@@ -207,7 +221,7 @@ class MirrorWebSocketServer(
 
     /** Start streaming to an allowed client: the current picture first, then live frames.
      *  [secret] is handed over once, on the Allow that created it. */
-    private fun grant(conn: WebSocket, id: String, secret: String?) {
+    private fun grant(conn: WebSocket, id: String, name: String, secret: String?) {
         synchronized(lock) {
             try {
                 conn.send(approvalJson("granted", secret))
@@ -216,7 +230,8 @@ class MirrorWebSocketServer(
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to send current picture to new client", e)
             }
-            ready[conn] = id
+            val address = conn.remoteSocketAddress?.address?.hostAddress ?: ""
+            ready[conn] = Watcher(id, name, address, System.currentTimeMillis())
         }
         conn.getAttachment<Int?>()?.takeIf { it > 0 }?.let(onBitrate)
         onClientsChanged()
@@ -234,7 +249,7 @@ class MirrorWebSocketServer(
         }
         waiting?.let {
             mainHandler.removeCallbacks(it.timeout)
-            if (roomFor(id)) grant(it.conn, id, secret)
+            if (roomFor(id)) grant(it.conn, id, it.name, secret)
             else it.conn.close(CLOSE_REJECTED, "Another computer is already connected")
         }
         onClientsChanged()
