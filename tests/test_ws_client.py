@@ -64,4 +64,12 @@ c._handle_text('{"type":"audio","enabled":true}')
 c._handle_text('{"type":"audio","enabled":"false"}')
 assert audio == [True, False]
 
+# so does whether the phone can apply input, read just as strictly
+control = []
+c.control_state_changed.connect(control.append)
+c._handle_text('{"type":"control","enabled":false}')
+c._handle_text('{"type":"control","enabled":true}')
+c._handle_text('{"type":"control","enabled":"true"}')
+assert control == [False, True, False]
+
 print("ws_client OK")

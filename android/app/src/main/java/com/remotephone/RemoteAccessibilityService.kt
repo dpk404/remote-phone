@@ -115,12 +115,14 @@ class RemoteAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        ScreenCaptureService.setControl(true)
         onStateChanged?.invoke()
         Log.i(TAG, "Accessibility service connected — remote control ready")
     }
 
     override fun onDestroy() {
         instance = null
+        ScreenCaptureService.setControl(false)
         onStateChanged?.invoke()
         Log.i(TAG, "Accessibility service destroyed")
         super.onDestroy()

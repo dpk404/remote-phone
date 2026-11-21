@@ -635,6 +635,7 @@ class PhoneConnection {
     this.wantConnected = false;
     this.everOpened = false;
     this.granted = false;
+    this.controlOff = false;
     this.delay = RECONNECT_BASE;
     this.attempt = 0;
     this.retryTimer = null;
@@ -757,7 +758,7 @@ class PhoneConnection {
         } else if (msg.state === 'granted') {
           this.granted = true;
           updateButtons();
-          setStatus('Connected to ' + ((this.info && this.info.device) || 'phone') + (this.video instanceof MsePipeline ? ' (MSE)' : ''), 'ok');
+          this.showConnected();
           setHint('Waiting for the first picture…');
           ui.stage.focus({ preventScroll: true });
           if (ui.audio.checked) this.sendCommand({ type: 'toggle_audio', enabled: true });
@@ -781,7 +782,7 @@ class PhoneConnection {
         if (!msg.content) break;
         // No clipboard API over plain http: hand the text over in a prompt instead of losing it
         (navigator.clipboard ? navigator.clipboard.writeText(msg.content) : Promise.reject()).then(
-          () => setStatus('Copied to clipboard (' + msg.content.length + ' chars)', 'ok'),
+          () => this.controlOff || setStatus('Copied to clipboard (' + msg.content.length + ' chars)', 'ok'),
           () => { setStatus('Browser refused clipboard access', 'err'); prompt('Phone clipboard (copy it from here):', msg.content); });
         break;
       case 'audio': {
@@ -798,10 +799,20 @@ class PhoneConnection {
         }, 1000);
         break;
       }
+      case 'control':
+        // Off while the phone's accessibility service is not running: it drops input, the picture keeps coming
+        this.controlOff = msg.enabled !== true;
+        this.showConnected();
+        break;
       case 'error':
         setStatus(msg.message || 'Unknown error', 'err');
         break;
     }
+  }
+
+  showConnected() {
+    if (this.controlOff) setStatus('Remote control is off on the phone', 'err');
+    else setStatus('Connected to ' + ((this.info && this.info.device) || 'phone') + (this.video instanceof MsePipeline ? ' (MSE)' : ''), 'ok');
   }
 
   /** Close and reopen immediately (used after rotating identity). */
@@ -866,6 +877,7 @@ class PhoneConnection {
 
   onDisconnected() {
     this.granted = false;
+    this.controlOff = false;
     this.video?.reset();
     ui.audio.disabled = true;
     ui.audio.checked = false;

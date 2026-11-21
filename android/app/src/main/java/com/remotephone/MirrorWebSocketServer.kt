@@ -232,6 +232,7 @@ class MirrorWebSocketServer(
             try {
                 conn.send(approvalJson("granted", secret))
                 if (audioOn) conn.send(audioJson(true))
+                if (!controlOn) conn.send(controlJson(false))
                 videoConfigFrame?.let { conn.send(it) }
                 gop.forEach { conn.send(it) }
             } catch (e: Exception) {
@@ -293,6 +294,21 @@ class MirrorWebSocketServer(
     fun setAudio(enabled: Boolean) {
         val conns = synchronized(lock) { audioOn = enabled; ready.keys.toList() }
         val json = audioJson(enabled)
+        conns.forEach { try { it.send(json) } catch (_: Exception) {} }
+    }
+
+    private fun controlJson(enabled: Boolean): String = JSONObject().put("type", "control").put("enabled", enabled).toString()
+
+    private var controlOn = RemoteAccessibilityService.isRunning()  // guarded by [lock]
+
+    /** Tells every allowed client whether its input reaches the phone (the accessibility service runs). */
+    fun setControl(enabled: Boolean) {
+        val conns = synchronized(lock) {
+            if (controlOn == enabled) return
+            controlOn = enabled
+            ready.keys.toList()
+        }
+        val json = controlJson(enabled)
         conns.forEach { try { it.send(json) } catch (_: Exception) {} }
     }
 

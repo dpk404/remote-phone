@@ -76,6 +76,7 @@ class WebSocketClient(QObject):
     approval_changed = pyqtSignal(str)  # "pending" while the phone's owner decides, then "granted"
     clipboard_received = pyqtSignal(str)
     audio_state_changed = pyqtSignal(bool)  # the phone's audio switch, whichever side flipped it
+    control_state_changed = pyqtSignal(bool)  # False while the phone cannot apply input
     error_occurred = pyqtSignal(str)
 
     def __init__(self, parent=None):
@@ -223,6 +224,8 @@ class WebSocketClient(QObject):
                 self.clipboard_received.emit(obj.get("content", ""))
             elif msg_type == "audio":
                 self.audio_state_changed.emit(obj.get("enabled") is True)
+            elif msg_type == "control":
+                self.control_state_changed.emit(obj.get("enabled") is True)
             elif msg_type == "error":
                 self.error_occurred.emit(obj.get("message", "Unknown error"))
         except json.JSONDecodeError:

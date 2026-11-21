@@ -290,6 +290,7 @@ class MainWindow(QMainWindow):
         self._connecting = False  # from a connect click until the connection is given up
         self.frame_count = 0  # decoded frames since the last FPS tick
         self._resolution = ""
+        self._control_off = False  # the phone drops input until it says control is back
         self._landscape = False  # shape the window was last fitted to; starts portrait
 
         self._setup_ui()
@@ -595,6 +596,7 @@ class MainWindow(QMainWindow):
         self.ws_client.approval_changed.connect(self._on_approval)
         self.ws_client.clipboard_received.connect(self._on_clipboard_received)
         self.ws_client.audio_state_changed.connect(self._on_audio_state)
+        self.ws_client.control_state_changed.connect(self._on_control_state)
         self.ws_client.error_occurred.connect(self._on_error)
 
         # Give decoder a direct reference so WS thread can feed frames
@@ -741,6 +743,7 @@ class MainWindow(QMainWindow):
         self.connected = True
         QSettings().setValue("last_ip", self.ip_input.text().strip())
         self.frame_count = 0
+        self._control_off = False
         self._set_status("Connected, waiting for the phone...", AMBER)
         self.decoder.start()
 
@@ -748,6 +751,7 @@ class MainWindow(QMainWindow):
         was_connected = self.connected
         self.connected = False
         self.frame_count = 0
+        self._control_off = False
         self.decoder.stop()
         self.audio_player.stop()
         self.input_handler.reset()
@@ -796,13 +800,25 @@ class MainWindow(QMainWindow):
 
     def _show_mirror(self):
         self._set_status("Connected")
-        self._set_pill(f"<span style='color:{GREEN}'>●</span>&nbsp;Live", False)
+        self._set_live_pill()
         self.stack.setCurrentWidget(self.mirror_page)
         self.video_widget.setFocus()
 
+    def _set_live_pill(self):
+        if self._control_off:
+            self._set_pill(f"<span style='color:{AMBER}'>●</span>&nbsp;Control off", True)
+        else:
+            self._set_pill(f"<span style='color:{GREEN}'>●</span>&nbsp;Live", False)
+
+    def _on_control_state(self, enabled: bool):
+        self._control_off = not enabled
+        self._set_live_pill()
+        self.stats_label.setText("Remote control is off on the phone" if self._control_off else self._resolution)
+
     def _on_clipboard_received(self, content: str):
         QApplication.clipboard().setText(content)
-        self.stats_label.setText(f"Copied to clipboard ({len(content)} chars)")
+        if not self._control_off:
+            self.stats_label.setText(f"Copied to clipboard ({len(content)} chars)")
 
     def _on_error(self, error: str):
         self._set_status(error, RED)
@@ -891,7 +907,8 @@ class MainWindow(QMainWindow):
 
     def _update_fps(self):
         if self.connected:
-            self.stats_label.setText(f"{self._resolution} · {self.frame_count} fps")
+            if not self._control_off:
+                self.stats_label.setText(f"{self._resolution} · {self.frame_count} fps")
             self.frame_count = 0
 
     # ── Input handlers ──

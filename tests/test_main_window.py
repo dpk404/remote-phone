@@ -101,6 +101,27 @@ w._on_audio_state(True)
 w._on_disconnected(False)  # a lost connection forgets it until the phone says so again
 assert not w.audio_btn.isChecked() and sent == []
 
+# while the phone cannot apply input, the pill and the stats strip say so until it is back
+w.connected, w._resolution = True, "720 × 1520"
+w._show_mirror()
+w._on_control_state(False)
+off = "Remote control is off on the phone"
+assert "Control off" in w.live_pill.text() and w.live_pill.property("reconnecting")
+assert w.stats_label.text() == off
+w._update_fps()
+w._on_clipboard_received("hi")
+assert w.stats_label.text() == off and "Control off" in w.live_pill.text()
+w._on_control_state(True)
+assert "Live" in w.live_pill.text() and not w.live_pill.property("reconnecting")
+w._update_fps()
+assert w.stats_label.text().startswith("720 × 1520 ·")
+w._on_control_state(False)
+w._on_disconnected(False)  # a new connection starts with control available
+w.connected = True
+w._update_fps()
+w._show_mirror()
+assert "Live" in w.live_pill.text() and w.stats_label.text() != off
+
 assert main_window.is_newer("2.10.0", "2.9.1")
 assert not main_window.is_newer("2.1.0", "2.1.0") and not main_window.is_newer("2.0.9", "2.1.0")
 

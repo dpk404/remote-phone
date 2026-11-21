@@ -70,6 +70,10 @@ class ScreenCaptureService : Service() {
             instance?.setAudioEnabled(enabled)
         }
 
+        fun setControl(enabled: Boolean) {
+            instance?.webSocketServer?.setControl(enabled)
+        }
+
         fun audioEnabled(): Boolean = instance?.takeIf { it.isRunning }?.audioEnabled == true
 
         /** The computers currently watching, or null when not mirroring. */
