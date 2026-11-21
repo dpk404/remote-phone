@@ -9,9 +9,9 @@ Thanks for helping with RemotePhone. A few things worth knowing before you open 
 
 ## One protocol, several clients
 
-The Android app is the server. Every client, desktop or otherwise, speaks the protocol described in the README under **Protocol**.
+The Android app is the server. Every client, desktop or otherwise, speaks the protocol described in [PROTOCOL.md](PROTOCOL.md).
 
-- A change to the protocol goes into the phone app and every client in the same pull request, together with the README section. A release of the app and a release of the clients must work with each other.
+- A change to the protocol goes into the phone app and every client in the same pull request, together with `PROTOCOL.md`. A release of the app and a release of the clients must work with each other.
 - Every decision about who may watch or control the phone is made on the phone. A client never gets a way around approval, the challenge or the certificate binding.
 
 ## Code

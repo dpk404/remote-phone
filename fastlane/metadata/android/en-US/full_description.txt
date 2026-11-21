@@ -1,17 +1,19 @@
-RemotePhone lets you mirror and control your Android phone from your Linux desktop over WiFi — no USB debugging or ADB required.
+RemotePhone lets you mirror and control your Android phone from your computer over WiFi. No USB debugging or ADB required.
 
 Features:
-* Native resolution screen mirroring over WiFi
-* Full remote control — tap, swipe, long press, scroll, system keys
+* Screen mirroring at up to native resolution and 60 fps, with H.264 hardware encoding
+* Full remote control: tap, drag, long press, scroll, system keys
+* Live touch on Android 8+: a drag moves the phone as your hand moves
+* Keyboard input into phone text fields, including the lock screen PIN pad
+* Copy and paste between the phone and the computer
 * Audio mirroring with automatic phone speaker muting (Android 10+)
-* Keyboard input — type text directly into phone text fields
-* PIN pad keyboard support for lock screen
-* Low latency H.264 hardware encoding
-* Auto-discovery — finds your phone on the network automatically
-* Auto-reconnect on connection loss
-* Wake on input — wakes the phone screen remotely
-* Dark theme UI
+* Approval on the phone before a computer can see or control the screen
+* Encrypted connection
+* Auto-discovery and auto-reconnect on the local network
+* Wake on input: wakes the phone screen remotely
 
-The Linux client is available via pip: pip install remote-phone
+Clients:
+* Desktop client for Linux, macOS and Windows: pip install remote-phone
+* Browser client, nothing to install: https://dpk404.github.io/remote-phone/
 
-Both devices must be on the same WiFi network. The app uses an Accessibility Service to dispatch touch gestures and text input from the desktop.
+Both devices must be on the same WiFi network. The app uses an Accessibility Service to dispatch touch gestures and text input from the computer.

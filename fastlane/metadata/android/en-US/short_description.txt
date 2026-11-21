@@ -1,1 +1,1 @@
-Mirror and control your Android phone from Linux over WiFi
+Mirror and control your Android phone from a computer over WiFi

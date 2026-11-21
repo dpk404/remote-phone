@@ -10,7 +10,7 @@
   <strong>Mirror and control your Android phone from your desktop, no USB debugging required.</strong>
 </p>
 
-RemotePhone is a two-part system: an Android app that captures and streams your phone's screen, and a desktop client for Linux, macOS, and Windows that displays the stream and lets you control the phone with your mouse and keyboard.
+RemotePhone is a two-part system: an Android app that captures and streams your phone's screen, and a client that displays the stream and lets you control the phone with your mouse and keyboard. The client is a desktop app for Linux, macOS and Windows, or a page in your browser.
 
 Unlike scrcpy (which requires ADB/USB debugging), RemotePhone works entirely over WiFi using standard Android APIs.
 
@@ -18,20 +18,15 @@ Unlike scrcpy (which requires ADB/USB debugging), RemotePhone works entirely ove
 
 ## Features
 
-- **Native resolution** screen mirroring over WiFi
-- **Full remote control** — tap, swipe, long press, scroll, system keys
+- **Screen mirroring over WiFi** at up to native resolution and 60 fps, with H.264 hardware encoding
+- **Full remote control**: tap, drag, long press, scroll, system keys. On Android 8+ a drag or trackpad scroll moves the phone as your hand moves
+- **Keyboard input** into phone text fields, including the PIN pad, with copy and paste between the two clipboards
 - **Audio mirroring** with automatic phone speaker muting (Android 10+)
-- **No USB debugging** — no ADB, no developer mode needed
-- **Keyboard input** — type text directly into phone text fields, including PIN pad support
-- **Low latency** — H.264 hardware encoding, CBR mode, direct frame routing, smart frame dropping
-- **Auto-discovery** — scans local network and auto-connects to the phone
-- **Auto-reconnect** — reconnects automatically on connection loss with exponential backoff
-- **Wake on input** — wakes the phone screen when you interact from the desktop
-- **Approval on the phone** before a computer can see or control the screen, with optional remembering
-- **Encrypted connection** with a certificate the phone keeps in its keystore
-- **Landscape support** that turns the desktop window with the phone
-- **Instant picture** on connect, even when the phone screen is static
-- **Dark theme** — sleek UI on both phone and desktop
+- **No USB debugging**: no ADB, no developer mode needed
+- **Approval on the phone** before a computer can see or control the screen, over an encrypted connection
+- **Auto-discovery and auto-reconnect** on the local network
+- **Wake on input** and **landscape support** that turns the desktop window with the phone
+- **Browser client**: mirror and control from a static web page, nothing to install
 
 ## Architecture
 
@@ -46,202 +41,99 @@ Unlike scrcpy (which requires ADB/USB debugging), RemotePhone works entirely ove
 └──────────────────────┘                                  └──────────────────────┘
 ```
 
+The browser client takes the desktop client's place, with WebCodecs and Web Audio doing the decoding.
+
 ---
 
 ## Setup
 
 ### 1. Android App
 
-**Requirements:** Android 7.0+ (API 24). Audio mirroring requires Android 10+.
+Android 7.0+. Audio mirroring needs Android 10+.
 
-**Option A — Install pre-built APK:**
-
-1. Download the latest APK from [Releases](https://github.com/dpk404/remote-phone/releases) and install it
+1. Install it from [F-Droid](https://f-droid.org/packages/com.remotephone/) or download the APK from [Releases](https://github.com/dpk404/remote-phone/releases). To build it yourself, open `android/` in Android Studio and click **Run**
 2. **Android 13+ only:** Go to **Settings -> Apps -> RemotePhone -> ⋮ menu -> "Allow restricted settings"** (required for sideloaded apps to use accessibility)
-3. Open the app and tap **"Open Accessibility Settings"** -> find **RemotePhone** -> **Enable** it
-
-**Option B — Build from source:**
-
-1. Open the `android/` folder in **Android Studio**
-2. Let Gradle sync and download dependencies
-3. Connect your phone (or use wireless install) and click **Run**
-4. Enable the accessibility service as above
+3. Open the app and tap **Remote control** under Setup -> find **RemotePhone** -> **Enable** it
 
 ### 2. Desktop Client (Linux, macOS, Windows)
 
-**Requirements:** Python 3.10+. The pip wheels bundle FFmpeg on every platform and PortAudio on macOS and Windows. Linux needs the system PortAudio library for audio playback.
-
-**Option A: install via pip (recommended)**
+Needs Python 3.10+.
 
 ```bash
-# Linux only (Debian/Ubuntu): PortAudio for audio playback
-sudo apt install libportaudio2
-
-# All platforms
+sudo apt install libportaudio2   # Linux only (Debian/Ubuntu), for audio playback
 pip install remote-phone
 remotephone
 ```
 
-**Option B: run from source**
+**From source:** clone the repo, or take `RemotePhone-linux-<version>.tar.gz` from [Releases](https://github.com/dpk404/remote-phone/releases). `./run.sh` on Linux and macOS creates a virtual environment and installs the package into it (Linux also needs `python3-venv`). On Windows, run `pip install -e .` in a virtual environment, then `remotephone`.
 
-```bash
-# Linux only (Debian/Ubuntu). macOS and Windows just need Python 3.10+.
-sudo apt install python3 python3-venv python3-pip libportaudio2
-
-# Linux / macOS: extract the tarball (if downloaded from Releases), then run
-chmod +x run.sh
-./run.sh
-
-# Windows
-python -m venv venv
-venv\Scripts\activate
-pip install -e .
-remotephone
-```
-
-The launcher script creates a virtual environment and installs the package into it.
-
-**Option C: macOS app (no Python needed)**
-
-Download `RemotePhone-<version>-macos-arm64.dmg` from [Releases](https://github.com/dpk404/remote-phone/releases), open it, and drag RemotePhone into Applications. The app is not notarized, so macOS blocks the first launch: go to **System Settings -> Privacy & Security** and click **Open Anyway**, or clear the quarantine flag:
-
-```bash
-xattr -d com.apple.quarantine /Applications/RemotePhone.app
-```
-
-To build the app yourself: `pip install -e . pyinstaller && tools/build_mac.sh` (output in `dist/`).
+**macOS app (no Python needed):** download `RemotePhone-<version>-macos-arm64.dmg` from [Releases](https://github.com/dpk404/remote-phone/releases) and drag RemotePhone into Applications. The app is not notarized, so macOS blocks the first launch: click **Open Anyway** in **System Settings -> Privacy & Security**, or run `xattr -d com.apple.quarantine /Applications/RemotePhone.app`. To build it yourself: `pip install -e . pyinstaller && tools/build_mac.sh`.
 
 ### 3. Web Client (optional, nothing to install)
 
-The `web/` folder is a static browser client with the same features as the desktop client: two files, no build step, no server-side code. Host it anywhere static or open `web/index.html` directly, open `https://<phone-ip>:8765` once to accept the phone's certificate, then connect. See [web/README.md](web/README.md).
+A static browser client: mirroring, control, typing, clipboard and audio, without the network scan, so you type the phone's address. Use the hosted copy at <https://dpk404.github.io/remote-phone/> or open `web/index.html` directly. Open `https://<phone-ip>:8765` once to accept the phone's certificate, then connect. See [web/README.md](https://github.com/dpk404/remote-phone/blob/main/web/README.md).
 
 ---
 
 ## Usage
 
-1. **On your phone:** Open RemotePhone -> tap **"Start Mirroring"** -> grant the screen capture permission
-2. **On your computer:** Run the desktop client. It auto-scans the network and connects if one phone is found. Untick **Auto-scan** in the status bar to skip the scan on later launches; the client remembers the last IP it connected to
-3. **Back on the phone:** a connection request appears as a notification and as a card on the app's main screen. Tap **Allow**. The picture shows up at once
-4. If auto-connect doesn't work, enter the phone's IP (shown in the app) and click **Connect**
+1. **On your phone:** open RemotePhone, tap **Start mirroring** and grant the screen capture permission
+2. **On your computer:** run the desktop client. It scans the network and connects if it finds one phone. With several, pick one from the list. If none shows up, enter the phone's IP (shown in the app) and click **Connect to address**; the last address is remembered
+3. **Back on the phone:** tap **Allow** on the connection request, which shows as a notification and as a card on the app's main screen. The picture shows up at once
+4. **To finish:** tap **Stop mirroring** in the app, or **Stop** on its notification
+
+Two switches on the Connect screen turn off the scan at launch and the once-per-launch check with PyPI for a newer version.
 
 ### Who may connect
 
 Every decision is made on the phone; the desktop never asks anything.
 
-- A computer connecting for the first time gets neither video nor control until you tap **Allow**. Deny, or no answer within a minute, closes the connection and the desktop shows why.
-- Allow lasts for the current mirroring session, so reconnects are silent. Stopping and starting mirroring asks again.
-- The app's **Settings** screen has three switches: **Ask before a computer connects** (on), **Remember allowed computers** (off), and **Allow several computers at once** (off). With remembering on, an allowed computer connects without asking in later sessions until you tap **Forget remembered computers**. With several off, a second computer is rejected while one is watching.
-- The phone's notification and status line show which computers are watching.
-- If notifications are blocked for RemotePhone, the request still appears on the app's main screen.
+- A computer gets neither video nor control until you tap **Allow**. Deny, or no answer within a minute, closes the connection and the desktop shows why.
+- Allow lasts for the current mirroring session. With **Remember allowed computers** on in the app's Settings, it lasts until you tap **Forget** next to that computer.
+- Settings also has **Ask before a computer connects** (on by default; off lets any computer on the network watch and control the phone) and **Allow several computers at once** (off by default).
+- While mirroring, the app's main screen lists every computer that is watching, each with a **Disconnect** button that also ends its approval for this session. **Stop mirroring** closes every connection.
 
 ### Controls
 
 | Input | Action |
 |-------|--------|
 | Left click | Tap |
-| Click + drag | Swipe |
+| Click + drag | Drag (live on Android 8+, a swipe on release on Android 7) |
 | Hold click (> 0.5s) | Long press |
-| Scroll wheel | Scroll |
-| Horizontal scroll (2-finger trackpad) | Back gesture |
-| Right click | Back |
-| Middle click | Back |
-| Escape | Back |
+| Scroll wheel / two-finger scroll | Scroll |
+| Two-finger swipe right / right click / middle click / Escape | Back |
 | Home key | Home |
-| F2 | Recent apps |
-| F5 | Notifications |
-| F6 | Quick Settings |
-| F10 | Lock screen |
+| F2 / F5 / F6 | Recent apps / Notifications / Quick Settings |
+| F10 | Lock screen (Android 9+) |
 | F11 | Fullscreen toggle |
-| Any typing | Text input into focused field |
+| Typing, Delete, Enter | Go to the focused text field |
 | Backspace | Delete character (or Back if no text field) |
-| Delete | Delete forward |
-| Ctrl+A / C / X | Select all / Copy / Cut (copy and cut also land on the desktop clipboard) |
-| Ctrl+V | Paste the desktop clipboard into the phone |
-| Enter | Confirm / IME action / PIN submit |
+| Ctrl+A / C / X / V (Cmd on macOS) | Select all / Copy / Cut / Paste. Copy and cut also land on the desktop clipboard, and paste types what is on it |
 
-### Keyboard and Text Input
+Back, Home, Recents, Alerts and Lock are also buttons under the picture.
 
-When you tap a text field on the phone, you can type directly from your desktop keyboard. On Android 13+ this goes through the real input pipeline automatically, works in every app including text fields inside web pages, and your normal on-screen keyboard stays selected. On Android 12 and older, enable and select the **RemotePhone Keyboard** (the app's Remote Typing Setup card opens the settings) for the same reliability; without it, typing falls back to accessibility text actions, which work in native text fields but are unreliable in browsers.
+### Typing
 
-**PIN/Password fields** are handled specially — keyboard digits click the on-screen PIN pad buttons via the accessibility tree, and Enter searches for the confirm/OK button.
+On Android 13+ typing goes through the phone's real input pipeline with nothing to set up, including text fields inside web pages. On Android 12 and older, enable and select the **RemotePhone Keyboard** (the Remote typing row under Setup opens the settings) for the same result; without it, typing falls back to accessibility text actions, which some apps and browsers ignore. On a PIN pad such as the lock screen, digits press the matching on-screen buttons and Enter presses the confirm button.
+
+Copy and cut reach the desktop clipboard on Android 13+. On Android 10 to 12 that needs the RemotePhone Keyboard selected.
 
 ### Audio
 
-Toggle the **Audio** checkbox in the desktop client to stream phone audio to your computer. When enabled, the phone speakers are automatically muted so audio only plays on the desktop. Volume is restored when audio streaming is disabled or mirroring stops.
-
-Requires Android 10+ and `libportaudio2` on Linux.
+Click the speaker button above the picture in the desktop client, or switch on **Mirror audio too** in the phone app; each side follows the other. The phone speaker is muted while audio is streamed. Requires Android 10+, and `libportaudio2` on Linux.
 
 ---
 
 ## Protocol
 
-Communication uses WebSocket over TLS on port **8765**. The phone serves a self-signed certificate it generated once in its keystore. Desktop clients from 2.0 need the 2.0 phone app and vice versa.
-
-- **Video:** H.264 NAL units with a 9-byte binary header (frame type, timestamp, size)
-- **Audio:** Raw PCM (16-bit LE, 44100 Hz, stereo) with the same binary header
-- **Control:** JSON text messages for tap, swipe, scroll, key actions, text input
-
-### Handshake
-
-1. The client sends `hello` with a random id it made for this phone. The phone replies with `info` (device, screen size).
-2. Unknown id: the phone sends `approval: pending` and asks its owner. Allow sends `approval: granted` with a random secret, then the current group of pictures and the live stream. Deny closes the connection with code 1008.
-3. Known id: the phone sends a `challenge` nonce. The client answers `auth` with an HMAC-SHA256 over the nonce and the SHA-256 fingerprint of the certificate it connected to. A wrong answer closes with 1008. Binding the answer to the certificate means a relay on the network cannot stand in for the phone.
-4. Nothing but `hello` and `auth` is accepted from a client that has not been granted. The network scanner sends `hello` with `probe: true`, which only returns `info` and never prompts.
-
-### Encoding Settings
-
-| Setting | Value |
-|---------|-------|
-| Codec | H.264 (AVC) hardware-accelerated |
-| Profile | Main |
-| Bitrate | Adaptive (8 bits/pixel, 4-40 Mbps) |
-| Frame rate | 30 FPS |
-| Bitrate mode | CBR |
-| Keyframe interval | 1 second |
-| Low latency | Enabled (Android 11+) |
-
----
+WebSocket over TLS on port **8765**, with a self-signed certificate the phone keeps in its keystore. H.264 video and PCM audio go to the client, and JSON commands come back. The message formats, the handshake and the encoder settings are in [PROTOCOL.md](https://github.com/dpk404/remote-phone/blob/main/PROTOCOL.md).
 
 ## Known Limitations
 
-- **Lock screen** displays as black — this is an Android OS security restriction on MediaProjection. You can still type your PIN from the keyboard (digits click the PIN pad buttons).
-- **Secure screens** (banking apps, DRM content) also display as black for the same reason.
+- **Lock screen and secure screens** (banking apps, DRM content) display as black. This is an Android security restriction on MediaProjection. You can still type your PIN from the keyboard.
 - Both devices must be on the **same WiFi network**.
-- Some device manufacturers may restrict the AccessibilityService or MediaProjection behavior.
-- Text input uses `ACTION_SET_TEXT` which may not work in all apps (games, custom views).
-- Remembered computers depend on the phone's certificate and the desktop's stored secret. Clearing the app's data on either side, or reinstalling, asks for approval again.
-
----
-
-## Project Structure
-
-```
-remote_phone/
-├── android/                    # Android app (Kotlin)
-│   ├── app/src/main/java/com/remotephone/
-│   │   ├── MainActivity.kt              # UI, permission flow, connection requests
-│   │   ├── SettingsActivity.kt          # Who may connect
-│   │   ├── Prefs.kt                     # Settings and remembered computers
-│   │   ├── ScreenCaptureService.kt       # MediaProjection + H.264 encoding, approval prompts
-│   │   ├── RemoteAccessibilityService.kt # Gesture dispatch + text input
-│   │   ├── MirrorWebSocketServer.kt      # WebSocket server, consent gate, picture replay
-│   │   └── Tls.kt                        # Keystore certificate for the TLS server
-│   └── app/src/main/res/                 # Layouts, drawables, configs
-│
-├── remotephone/                # Python desktop client (pip install remote-phone)
-│   ├── main.py                 # Entry point
-│   ├── ui/main_window.py       # PyQt6 window + video display
-│   ├── network/ws_client.py    # WebSocket client + auto-reconnect
-│   ├── network/scanner.py      # Network auto-discovery
-│   ├── decoder/video_decoder.py # H.264 decoding (PyAV/FFmpeg)
-│   ├── decoder/audio_player.py  # PCM audio playback
-│   └── input/input_handler.py   # Mouse/keyboard + gesture detection
-│
-├── run.sh                      # Auto-setup launcher for Linux/macOS (running from source)
-├── pyproject.toml              # Python package config
-├── .github/workflows/          # CI/CD (APK build + PyPI publish)
-└── README.md
-```
+- Some device manufacturers restrict the AccessibilityService or MediaProjection. On some phones, system Settings and a few protected apps can show a black picture or switch remote control off while they are open. The indicator at the top of the client shows **Control off** until control returns.
+- Clearing the app's data on either side, or reinstalling, makes a remembered computer ask for approval again.
 
 ## License
 

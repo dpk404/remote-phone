@@ -21,7 +21,8 @@ No WebAssembly is needed. Video is decoded natively in one of two ways:
 
 ## Use
 
-1. Host the `web/` folder anywhere static (GitHub Pages, nginx, `python3 -m http.server`), or open
+1. Use the hosted copy at <https://dpk404.github.io/remote-phone/> (deployed from this folder on every
+   release), host the `web/` folder anywhere static (nginx, `python3 -m http.server`), or open
    `index.html` directly. Over `https://`, `http://localhost` or `file://` WebCodecs is used; elsewhere the MSE fallback.
 2. Start mirroring on the phone and note its IP.
 3. **Once per browser:** open `https://<phone-ip>:8765` and accept the self-signed certificate warning
@@ -30,8 +31,9 @@ No WebAssembly is needed. Video is decoded natively in one of two ways:
 
 Bookmarkable: `index.html?host=192.168.1.42&port=8765&connect=1` (add `&fp=<fingerprint>`, see below).
 
-Controls match the desktop client: click = tap, drag = swipe, hold = long press, wheel = scroll,
-horizontal two-finger swipe / right or middle click / Esc = Back, F2 recents, F5 notifications, F6 quick settings,
+Controls follow the desktop client: click = tap, drag = a live drag on Android 8+ (the phone follows the
+pointer; older phones get a swipe on release), hold = long press, wheel = scroll (in steps; the live trackpad scroll is desktop only),
+horizontal two-finger swipe / right or middle click / Esc = Back, Home = home, F2 recents, F5 notifications, F6 quick settings,
 F10 lock, F11 fullscreen, typing goes to the focused field, Ctrl/Cmd + A/C/X, Ctrl/Cmd+V pastes the computer clipboard.
 Touch screens work too (pointer events).
 
@@ -63,4 +65,5 @@ uv venv /tmp/rp-venv && uv pip install --python /tmp/rp-venv/bin/python websocke
 ```
 
 Type `ws://localhost` as host to use plain WebSocket against the mock. `test/e2e_cdp.mjs` drives a headless
-Chromium over CDP (connect, decode, tap, swipe, long press, back, scroll, keys, copy) and saves a screenshot.
+Chromium over CDP (connect, decode, tap, drag, long press, back, scroll, keys, copy) and saves a screenshot.
+The mock offers live touch, so presses arrive as `touch` down, move and up.
