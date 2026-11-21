@@ -1,6 +1,9 @@
 package com.remotephone
 
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -10,6 +13,7 @@ import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.core.content.pm.PackageInfoCompat
 
 /** One row of item_computer: icon by client kind, highlighted when [live], and a red text action. */
 fun computerRow(
@@ -44,6 +48,14 @@ class SettingsActivity : ComponentActivity() {
         findViewById<View>(R.id.forgetButton).setOnClickListener {
             Prefs.forgetRemembered(this)
             showRemembered()
+        }
+
+        val info = packageManager.getPackageInfo(packageName, 0)
+        findViewById<TextView>(R.id.versionText).text = "${info.versionName} (${PackageInfoCompat.getLongVersionCode(info)})"
+        findViewById<View>(R.id.sourceRow).setOnClickListener {
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/dpk404/remote-phone")))
+            } catch (_: ActivityNotFoundException) {}
         }
     }
 
