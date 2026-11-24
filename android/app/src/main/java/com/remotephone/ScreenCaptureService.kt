@@ -64,6 +64,8 @@ class ScreenCaptureService : Service() {
 
         private var instance: ScreenCaptureService? = null
 
+        fun isActive(): Boolean = instance?.isRunning == true
+
         const val EXTRA_AUDIO = "audio"
 
         fun toggleAudio(enabled: Boolean) {
@@ -243,6 +245,7 @@ class ScreenCaptureService : Service() {
         webSocketServer!!.start()
 
         isRunning = true
+        MirrorTileService.refresh(this)
 
         // Start reading encoded video frames
         videoThread = Thread({ readVideoEncoder(encoder) }, "VideoEncoderThread").apply { start() }
@@ -564,6 +567,7 @@ class ScreenCaptureService : Service() {
     private fun stopCapture() {
         if (!isRunning) return
         isRunning = false
+        MirrorTileService.refresh(this)
         mainHandler.post { onClientsChanged?.invoke(null) }
 
         // Restore phone volume if audio was streaming
